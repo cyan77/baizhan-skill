@@ -16,6 +16,8 @@ android/.gradle/
 android/build/
 android/local.properties
 android/key.properties
+android/app/*.jks
+android/app/*.keystore
 
 ios/Flutter/ephemeral/
 ios/Pods/
