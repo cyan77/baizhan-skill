@@ -1,5 +1,6 @@
 import 'package:baizhan_skill/main.dart';
 import 'package:baizhan_skill/boss_catalog_service.dart';
+import 'package:baizhan_skill/sync_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -295,4 +296,73 @@ void main() {
     expect(store.characters.single.levels['skill-b'], 1);
     expect(store.purpleSkills, contains('新增技能'));
   });
+
+  test('newer cloud backup is detected before upload and prevents overwrite',
+      () async {
+    final service = _FakeWebDavSyncService();
+    final store = SkillStore(webDavSyncService: service)
+      ..syncConfig = const SyncConfig(
+          url: 'https://example.com',
+          username: 'user',
+          password: 'password',
+          remotePath: '/backup.json')
+      ..lastSyncAt = DateTime(2026, 9, 20);
+
+    final checked = await store.checkForNewerBackup();
+    final synced = await store.syncNow();
+
+    expect(checked, isTrue);
+    expect(store.newerRemoteBackup?.path, '/newer.json');
+    expect(synced, isFalse);
+    expect(service.uploadCalled, isFalse);
+    expect(store.syncMessage, contains('请先恢复'));
+  });
+
+  test('invalid cloud backup does not erase current local data', () async {
+    final service = _FakeWebDavSyncService(
+        downloadPayload: '{"characters": [], "importantSkills": []}');
+    final store = SkillStore(webDavSyncService: service)
+      ..syncConfig = const SyncConfig(
+          url: 'https://example.com',
+          username: 'user',
+          password: 'password',
+          remotePath: '/backup.json')
+      ..bosses.add(Boss(
+          id: 'safe-boss',
+          name: '保留 Boss',
+          spirit: 400,
+          stamina: 400,
+          skills: []));
+
+    final restored = await store.restoreRemoteBackup(
+        const RemoteBackup(name: 'broken.json', path: '/broken.json'));
+
+    expect(restored, isFalse);
+    expect(store.bosses.single.name, '保留 Boss');
+  });
+}
+
+class _FakeWebDavSyncService extends WebDavSyncService {
+  _FakeWebDavSyncService({this.downloadPayload = '{}'});
+
+  final String downloadPayload;
+  bool uploadCalled = false;
+
+  @override
+  Future<List<RemoteBackup>> listBackups(SyncConfig config) async => [
+        RemoteBackup(
+            name: 'backup_20260921_120000000_device.json',
+            path: '/newer.json',
+            modifiedAt: DateTime(2026, 9, 21, 12))
+      ];
+
+  @override
+  Future<RemoteBackup> upload(SyncConfig config, String json) async {
+    uploadCalled = true;
+    return const RemoteBackup(name: 'uploaded.json', path: '/uploaded.json');
+  }
+
+  @override
+  Future<String> downloadBackup(SyncConfig config, RemoteBackup backup) async =>
+      downloadPayload;
 }

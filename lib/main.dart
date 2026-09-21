@@ -233,6 +233,15 @@ class CharacterData {
 }
 
 class SkillStore extends ChangeNotifier {
+  SkillStore({
+    SyncSettingsStore? syncSettingsStore,
+    WebDavSyncService? webDavSyncService,
+    BossCatalogService? bossCatalogService,
+    this.remoteCheckInterval = const Duration(minutes: 1),
+  })  : syncSettingsStore = syncSettingsStore ?? SyncSettingsStore(),
+        webDavSyncService = webDavSyncService ?? WebDavSyncService(),
+        bossCatalogService = bossCatalogService ?? BossCatalogService();
+
   final List<CharacterData> characters = [];
   final List<Boss> bosses = [];
   final List<String> importantSkills = [];
@@ -243,25 +252,32 @@ class SkillStore extends ChangeNotifier {
   static const bossCatalogVersionKey = 'boss_catalog_version';
   SharedPreferences? _prefs;
   final ThemeSettingsStore themeSettingsStore = ThemeSettingsStore();
-  final SyncSettingsStore syncSettingsStore = SyncSettingsStore();
-  final WebDavSyncService webDavSyncService = WebDavSyncService();
-  final BossCatalogService bossCatalogService = BossCatalogService();
+  final SyncSettingsStore syncSettingsStore;
+  final WebDavSyncService webDavSyncService;
+  final BossCatalogService bossCatalogService;
+  final Duration remoteCheckInterval;
   ThemeMode themeMode = ThemeMode.light;
   SyncConfig? syncConfig;
   DateTime? lastSyncAt;
   String? currentRemoteBackupPath;
   String? syncMessage;
   bool syncBusy = false;
+  bool restoreBusy = false;
   bool backupCheckBusy = false;
   List<RemoteBackup> remoteBackups = [];
+  RemoteBackup? newerRemoteBackup;
   RemoteBossCatalog? availableBossCatalog;
   int bossCatalogVersion = 1;
   bool bossCatalogCheckBusy = false;
   String? bossCatalogCheckError;
   Timer? _autoSyncTimer;
+  Timer? _remoteCheckTimer;
+  Timer? _backupCheckRetryTimer;
   Timer? _changeSyncTimer;
   int _dataRevision = 0;
   int _syncedRevision = 0;
+  int _successfulSyncGeneration = 0;
+  bool _syncInitialized = false;
   CharacterData? get selectedCharacter => _findCharacter(selectedCharacterId);
   List<CharacterData> get activeCharacters =>
       characters.where((item) => !item.archived).toList();
@@ -278,9 +294,17 @@ class SkillStore extends ChangeNotifier {
       _seed();
     else
       _restore(jsonDecode(raw) as Map<String, dynamic>);
+    _syncInitialized = true;
     _scheduleAutoSync();
+    _scheduleRemoteBackupChecks();
     notifyListeners();
+    unawaited(_initializeRemoteSync());
     unawaited(checkForBossCatalogUpdate());
+  }
+
+  Future<void> _initializeRemoteSync() async {
+    final checked = await checkForNewerBackupWithRetry();
+    if (checked && newerRemoteBackup == null) _scheduleChangeSync();
   }
 
   Future<bool> checkForBossCatalogUpdate() async {
@@ -429,6 +453,24 @@ class SkillStore extends ChangeNotifier {
     page = (data['page'] as int? ?? 0).clamp(0, 7);
   }
 
+  void _replaceData(Map<String, dynamic> data) {
+    final previous = _json();
+    try {
+      characters.clear();
+      bosses.clear();
+      importantSkills.clear();
+      purpleSkills.clear();
+      _restore(data);
+    } catch (_) {
+      characters.clear();
+      bosses.clear();
+      importantSkills.clear();
+      purpleSkills.clear();
+      _restore(previous);
+      rethrow;
+    }
+  }
+
   void _ensureGenderSpecificSkills() {
     final boss = bosses.where((item) => item.name == '无精耐提升技能').firstOrNull;
     if (boss == null || boss.skills.any((skill) => skill.name == '蛮熊碎颅击')) {
@@ -461,19 +503,111 @@ class SkillStore extends ChangeNotifier {
     if (config == null || !config.isValid || config.autoSyncMinutes <= 0) {
       return;
     }
-    _autoSyncTimer = Timer.periodic(Duration(minutes: config.autoSyncMinutes),
-        (_) => syncNow(silent: true));
+    _autoSyncTimer = Timer.periodic(
+        Duration(minutes: config.autoSyncMinutes), (_) => checkAutoSync());
+  }
+
+  void _scheduleRemoteBackupChecks() {
+    _remoteCheckTimer?.cancel();
+    final config = syncConfig;
+    if (config == null || !config.isValid) return;
+    _remoteCheckTimer = Timer.periodic(remoteCheckInterval, (_) {
+      if (newerRemoteBackup == null &&
+          !backupCheckBusy &&
+          !syncBusy &&
+          !restoreBusy) {
+        unawaited(checkForNewerBackup(silent: true).then((checked) {
+          if (checked && newerRemoteBackup == null) _scheduleChangeSync();
+        }));
+      }
+    });
   }
 
   void _scheduleChangeSync() {
     _changeSyncTimer?.cancel();
     final config = syncConfig;
-    if (_dataRevision <= _syncedRevision || config == null || !config.isValid) {
+    if (!_syncInitialized ||
+        _dataRevision <= _syncedRevision ||
+        config == null ||
+        !config.isValid ||
+        newerRemoteBackup != null) {
       return;
     }
-    _changeSyncTimer = Timer(const Duration(seconds: 2), () {
-      if (_dataRevision > _syncedRevision) unawaited(syncNow(silent: true));
+    _changeSyncTimer = Timer(const Duration(seconds: 2), () async {
+      if (_dataRevision <= _syncedRevision || newerRemoteBackup != null) return;
+      final checked = await checkForNewerBackup(silent: true);
+      if (checked &&
+          _dataRevision > _syncedRevision &&
+          newerRemoteBackup == null) {
+        await syncNow(silent: true);
+      }
     });
+  }
+
+  Future<bool> checkForNewerBackupWithRetry() async {
+    final config = syncConfig;
+    if (config == null || !config.isValid) return false;
+    final succeeded = await checkForNewerBackup();
+    if (succeeded) {
+      _backupCheckRetryTimer?.cancel();
+      return true;
+    }
+    _backupCheckRetryTimer?.cancel();
+    _backupCheckRetryTimer = Timer(const Duration(seconds: 10), () async {
+      final checked = await checkForNewerBackup();
+      if (checked && newerRemoteBackup == null) _scheduleChangeSync();
+    });
+    return false;
+  }
+
+  Future<void> checkAutoSync() async {
+    final config = syncConfig;
+    if (config == null || !config.isValid) return;
+    final checked = await checkForNewerBackup(silent: true);
+    if (!checked || newerRemoteBackup != null) return;
+    if (_dataRevision <= _syncedRevision || config.autoSyncMinutes <= 0) return;
+    final due = lastSyncAt == null ||
+        DateTime.now().difference(lastSyncAt!).inMinutes >=
+            config.autoSyncMinutes;
+    if (due) await syncNow(silent: true);
+  }
+
+  Future<bool> checkForNewerBackup({bool silent = false}) async {
+    if (backupCheckBusy || syncBusy || restoreBusy) return false;
+    final config = syncConfig;
+    if (config == null || !config.isValid) {
+      newerRemoteBackup = null;
+      return false;
+    }
+    backupCheckBusy = true;
+    final previousPath = newerRemoteBackup?.path;
+    final syncGenerationAtStart = _successfulSyncGeneration;
+    if (!silent) notifyListeners();
+    try {
+      final backups = await webDavSyncService.listBackups(config);
+      remoteBackups = backups;
+      final latest = backups.firstOrNull;
+      final latestTime =
+          latest == null ? null : webDavSyncService.backupTime(latest);
+      if (syncGenerationAtStart == _successfulSyncGeneration) {
+        final isOwnLatest =
+            latest != null && latest.path == currentRemoteBackupPath;
+        newerRemoteBackup = !isOwnLatest &&
+                latest != null &&
+                (lastSyncAt == null ||
+                    (latestTime != null && latestTime.isAfter(lastSyncAt!)))
+            ? latest
+            : null;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      backupCheckBusy = false;
+      if (!silent || previousPath != newerRemoteBackup?.path) {
+        notifyListeners();
+      }
+    }
   }
 
   Future<void> setThemeMode(ThemeMode mode) async {
@@ -487,8 +621,10 @@ class SkillStore extends ChangeNotifier {
     await syncSettingsStore.save(config);
     syncConfig = config;
     _scheduleAutoSync();
-    _scheduleChangeSync();
+    _scheduleRemoteBackupChecks();
     notifyListeners();
+    final checked = await checkForNewerBackup();
+    if (checked && newerRemoteBackup == null) _scheduleChangeSync();
   }
 
   Future<bool> testSyncConnection() async {
@@ -511,7 +647,12 @@ class SkillStore extends ChangeNotifier {
   }
 
   Future<bool> syncNow({bool silent = false}) async {
-    if (syncBusy) return false;
+    if (syncBusy || restoreBusy) return false;
+    if (newerRemoteBackup != null) {
+      syncMessage = '发现较新的云端备份，请先恢复后再同步';
+      if (!silent) notifyListeners();
+      return false;
+    }
     final config = syncConfig;
     if (config == null || !config.isValid) {
       if (!silent) {
@@ -529,6 +670,8 @@ class SkillStore extends ChangeNotifier {
       lastSyncAt = DateTime.now();
       currentRemoteBackupPath = backup.path;
       _syncedRevision = revisionAtStart;
+      _successfulSyncGeneration++;
+      newerRemoteBackup = null;
       await syncSettingsStore.saveLastSyncAt(lastSyncAt!);
       await syncSettingsStore.saveCurrentBackupPath(backup.path);
       syncMessage = '已同步 · ${backup.name}';
@@ -550,41 +693,37 @@ class SkillStore extends ChangeNotifier {
       notifyListeners();
       return false;
     }
-    backupCheckBusy = true;
-    notifyListeners();
-    try {
-      remoteBackups = await webDavSyncService.listBackups(config);
+    final loaded = await checkForNewerBackup();
+    if (loaded) {
       syncMessage = '已读取 ${remoteBackups.length} 个远程备份';
-      return true;
-    } catch (error) {
-      syncMessage = '读取失败：$error';
-      return false;
-    } finally {
-      backupCheckBusy = false;
       notifyListeners();
+      return true;
     }
+    syncMessage = '读取远程备份失败';
+    notifyListeners();
+    return false;
   }
 
   Future<bool> restoreRemoteBackup(RemoteBackup backup) async {
     final config = syncConfig;
-    if (config == null || !config.isValid || syncBusy) return false;
-    syncBusy = true;
+    if (config == null || !config.isValid || syncBusy || restoreBusy) {
+      return false;
+    }
+    _changeSyncTimer?.cancel();
+    restoreBusy = true;
     notifyListeners();
     try {
       final raw = await webDavSyncService.downloadBackup(config, backup);
       final data = jsonDecode(raw) as Map<String, dynamic>;
-      characters.clear();
-      bosses.clear();
-      importantSkills.clear();
-      purpleSkills.clear();
-      _restore(data);
+      _replaceData(data);
       _dataRevision = 0;
       _syncedRevision = 0;
       currentRemoteBackupPath = backup.path;
+      newerRemoteBackup = null;
       lastSyncAt = DateTime.now();
       await syncSettingsStore.saveLastSyncAt(lastSyncAt!);
       await syncSettingsStore.saveCurrentBackupPath(backup.path);
-      _save();
+      await _prefs?.setString(storageKey, jsonEncode(_json()));
       _syncedRevision = _dataRevision;
       syncMessage = '已恢复 · ${backup.name}';
       return true;
@@ -592,9 +731,18 @@ class SkillStore extends ChangeNotifier {
       syncMessage = '恢复失败：$error';
       return false;
     } finally {
-      syncBusy = false;
+      restoreBusy = false;
       notifyListeners();
     }
+  }
+
+  @override
+  void dispose() {
+    _autoSyncTimer?.cancel();
+    _remoteCheckTimer?.cancel();
+    _backupCheckRetryTimer?.cancel();
+    _changeSyncTimer?.cancel();
+    super.dispose();
   }
 
   CharacterData? _findCharacter(String id) {
@@ -929,11 +1077,7 @@ class SkillStore extends ChangeNotifier {
     final bytes = result?.files.single.bytes;
     if (bytes == null) return false;
     final data = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    characters.clear();
-    bosses.clear();
-    importantSkills.clear();
-    purpleSkills.clear();
-    _restore(data);
+    _replaceData(data);
     if (selectedCharacterId.isEmpty && characters.isNotEmpty) {
       selectedCharacterId = characters.first.id;
     }
@@ -2132,15 +2276,25 @@ class _HomePageState extends State<HomePage> {
         const SizedBox(width: 10),
         Expanded(
             child: Text(
-                store.lastSyncAt == null
-                    ? (store.syncConfig?.isValid == true
-                        ? '尚未同步'
-                        : '未配置 WebDAV')
-                    : '上次成功 ${store.lastSyncAt!.toLocal().toString().substring(0, 16)}',
+                store.newerRemoteBackup != null
+                    ? '发现较新的云端备份，请先恢复后再同步'
+                    : store.lastSyncAt == null
+                        ? (store.syncConfig?.isValid == true
+                            ? '尚未同步'
+                            : '未配置 WebDAV')
+                        : '上次成功 ${store.lastSyncAt!.toLocal().toString().substring(0, 16)}',
                 style: const TextStyle(color: ink, fontSize: 12))),
+        if (store.newerRemoteBackup != null)
+          IconButton(
+              tooltip: '恢复较新的云端备份',
+              onPressed: store.restoreBusy
+                  ? null
+                  : () => confirmRemoteBackupRestore(
+                      context, store, store.newerRemoteBackup!),
+              icon: const Icon(Icons.cloud_download_outlined, color: gold)),
         IconButton(
             tooltip: '立即同步',
-            onPressed: syncing
+            onPressed: syncing || store.restoreBusy
                 ? null
                 : () async {
                     setState(() => syncing = true);
@@ -3974,6 +4128,31 @@ class SyncBackupPage extends StatelessWidget {
                     color: ink, fontSize: 16, fontWeight: FontWeight.w600))
           ]),
           const SizedBox(height: 10),
+          if (store.newerRemoteBackup != null) ...[
+            Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                    color: const Color(0xfffff4e5),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xffffd59a))),
+                child: Row(children: [
+                  const Icon(Icons.cloud_download_outlined,
+                      color: gold, size: 20),
+                  const SizedBox(width: 9),
+                  Expanded(
+                      child: Text('发现较新的云端备份：${store.newerRemoteBackup!.name}',
+                          style: const TextStyle(
+                              color: ink, fontWeight: FontWeight.w600))),
+                  TextButton(
+                      onPressed: store.restoreBusy
+                          ? null
+                          : () => confirmRemoteBackupRestore(
+                              context, store, store.newerRemoteBackup!),
+                      child: const Text('恢复'))
+                ])),
+            const SizedBox(height: 10)
+          ],
           ListTile(
               contentPadding: EdgeInsets.zero,
               title: Text(store.syncConfig?.isValid == true ? '已配置' : '尚未配置',
@@ -4011,8 +4190,10 @@ class SyncBackupPage extends StatelessWidget {
                 subtitle: Text(backup.modifiedAt?.toLocal().toString() ?? '',
                     style: const TextStyle(fontSize: 11, color: muted)),
                 trailing: TextButton(
-                    onPressed:
-                        store.syncBusy ? null : () => _restore(context, backup),
+                    onPressed: store.syncBusy || store.restoreBusy
+                        ? null
+                        : () =>
+                            confirmRemoteBackupRestore(context, store, backup),
                     child: const Text('恢复'))))
           ]
         ]))
@@ -4055,24 +4236,6 @@ class SyncBackupPage extends StatelessWidget {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(store.syncMessage!)));
     }
-  }
-
-  Future<void> _restore(BuildContext context, RemoteBackup backup) async {
-    final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-              title: const Text('恢复远程备份'),
-              content: Text('将用 ${backup.name} 覆盖当前本地数据，确定继续吗？'),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(dialogContext, false),
-                    child: const Text('取消')),
-                FilledButton(
-                    onPressed: () => Navigator.pop(dialogContext, true),
-                    child: const Text('恢复'))
-              ],
-            ));
-    if (confirmed == true) await store.restoreRemoteBackup(backup);
   }
 
   Future<void> _configureSync(BuildContext context) async {
@@ -4144,6 +4307,31 @@ class SyncBackupPage extends StatelessWidget {
     username.dispose();
     password.dispose();
     remotePath.dispose();
+  }
+}
+
+Future<void> confirmRemoteBackupRestore(
+    BuildContext context, SkillStore store, RemoteBackup backup) async {
+  final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+            title: const Text('恢复远程备份'),
+            content: Text(
+                '本地角色、Boss、技能和重数将被“${backup.name}”替换。恢复不会自动上传；如需保留当前本地数据，请先手动同步或导出备份。'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('取消')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text('恢复'))
+            ],
+          ));
+  if (confirmed != true) return;
+  final restored = await store.restoreRemoteBackup(backup);
+  if (context.mounted && store.syncMessage != null) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(store.syncMessage ?? (restored ? '已恢复' : '恢复失败'))));
   }
 }
 
