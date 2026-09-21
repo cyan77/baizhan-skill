@@ -4181,20 +4181,16 @@ class SyncBackupPage extends StatelessWidget {
           if (store.remoteBackups.isNotEmpty) ...[
             const SizedBox(height: 14),
             const Divider(height: 1),
-            ...store.remoteBackups.map((backup) => ListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                leading:
-                    const Icon(Icons.backup_outlined, size: 18, color: muted),
-                title: Text(backup.name, style: const TextStyle(fontSize: 12)),
-                subtitle: Text(backup.modifiedAt?.toLocal().toString() ?? '',
-                    style: const TextStyle(fontSize: 11, color: muted)),
-                trailing: TextButton(
-                    onPressed: store.syncBusy || store.restoreBusy
+            ...store.remoteBackups.asMap().entries.map((entry) =>
+                _RemoteBackupListTile(
+                    backup: entry.value,
+                    isLatest: entry.key == 0,
+                    isCurrent:
+                        entry.value.path == store.currentRemoteBackupPath,
+                    onRestore: store.syncBusy || store.restoreBusy
                         ? null
-                        : () =>
-                            confirmRemoteBackupRestore(context, store, backup),
-                    child: const Text('恢复'))))
+                        : () => confirmRemoteBackupRestore(
+                            context, store, entry.value)))
           ]
         ]))
       ]));
@@ -4307,6 +4303,72 @@ class SyncBackupPage extends StatelessWidget {
     username.dispose();
     password.dispose();
     remotePath.dispose();
+  }
+}
+
+class _RemoteBackupListTile extends StatelessWidget {
+  const _RemoteBackupListTile({
+    required this.backup,
+    required this.isLatest,
+    required this.isCurrent,
+    required this.onRestore,
+  });
+
+  final RemoteBackup backup;
+  final bool isLatest;
+  final bool isCurrent;
+  final VoidCallback? onRestore;
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      leading: const Icon(Icons.backup_outlined, size: 18, color: muted),
+      title: Row(children: [
+        Expanded(
+            child: Text(backup.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12))),
+        if (isCurrent) ...[
+          const SizedBox(width: 6),
+          const _BackupVersionBadge(label: '当前', emphasized: true)
+        ],
+        if (isLatest) ...[
+          const SizedBox(width: 6),
+          const _BackupVersionBadge(label: '最新')
+        ]
+      ]),
+      subtitle: Text(backup.modifiedAt?.toLocal().toString() ?? '时间未知',
+          style: const TextStyle(fontSize: 11, color: muted)),
+      trailing: TextButton(onPressed: onRestore, child: const Text('恢复')));
+}
+
+class _BackupVersionBadge extends StatelessWidget {
+  const _BackupVersionBadge({required this.label, this.emphasized = false});
+
+  final String label;
+  final bool emphasized;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+            color: emphasized
+                ? scheme.primaryContainer
+                : scheme.surfaceContainerLow,
+            border: Border.all(
+                color: emphasized ? scheme.primary : scheme.outlineVariant),
+            borderRadius: BorderRadius.circular(5)),
+        child: Text(label,
+            style: TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w600,
+                color: emphasized
+                    ? scheme.onPrimaryContainer
+                    : scheme.onSurfaceVariant)));
   }
 }
 

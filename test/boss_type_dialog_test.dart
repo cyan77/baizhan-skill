@@ -340,6 +340,29 @@ void main() {
     expect(restored, isFalse);
     expect(store.bosses.single.name, '保留 Boss');
   });
+
+  testWidgets('remote backup list marks latest and current versions',
+      (tester) async {
+    final store = SkillStore()
+      ..syncConfig = const SyncConfig(
+          url: 'https://example.com',
+          username: 'user',
+          password: 'password',
+          remotePath: '/backup.json')
+      ..currentRemoteBackupPath = '/latest.json'
+      ..remoteBackups = const [
+        RemoteBackup(name: '最新备份', path: '/latest.json'),
+        RemoteBackup(name: '历史备份', path: '/older.json')
+      ];
+
+    await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: SyncBackupPage(store: store))));
+    await tester.pumpAndSettle();
+
+    expect(find.text('当前'), findsOneWidget);
+    expect(find.text('最新'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _FakeWebDavSyncService extends WebDavSyncService {
