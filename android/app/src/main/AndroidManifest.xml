@@ -1,4 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- WebDAV sync needs network access in release/profile builds too. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <application

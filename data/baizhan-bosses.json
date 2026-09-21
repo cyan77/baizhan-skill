@@ -1,0 +1,1015 @@
+{
+  "type": "baizhan-bosses",
+  "version": 1,
+  "updatedAt": "2026-09-21T13:34:07.938699Z",
+  "notes": "Boss 技能基础数据",
+  "bosses": [
+    {
+      "id": "boss-0",
+      "name": "华鹤炎",
+      "type": "普通",
+      "spirit": 240.0,
+      "stamina": 560.0,
+      "skills": [
+        {
+          "id": "boss-0-skill-0",
+          "name": "枪法炎罗",
+          "tradable": false
+        },
+        {
+          "id": "boss-0-skill-1",
+          "name": "特制金创药",
+          "tradable": false
+        },
+        {
+          "id": "boss-0-skill-2",
+          "name": "万花金创药",
+          "tradable": false
+        },
+        {
+          "id": "boss-0-skill-3",
+          "name": "五行术雷震",
+          "tradable": true
+        },
+        {
+          "id": "boss-0-skill-4",
+          "name": "五行术土遁",
+          "tradable": false
+        }
+      ]
+    },
+    {
+      "id": "boss-1",
+      "name": "方宇谦",
+      "type": "普通",
+      "spirit": 560.0,
+      "stamina": 240.0,
+      "skills": [
+        {
+          "id": "boss-1-skill-0",
+          "name": "漾剑式",
+          "tradable": false
+        },
+        {
+          "id": "boss-1-skill-1",
+          "name": "九阴封脉指",
+          "tradable": false
+        },
+        {
+          "id": "boss-1-skill-2",
+          "name": "归潮长生法",
+          "tradable": true
+        },
+        {
+          "id": "boss-1-skill-3",
+          "name": "定波式",
+          "tradable": false
+        }
+      ]
+    },
+    {
+      "id": "boss-2",
+      "name": "罗翼",
+      "type": "普通",
+      "spirit": 160.0,
+      "stamina": 640.0,
+      "skills": [
+        {
+          "id": "boss-2-skill-0",
+          "name": "兵犬丸",
+          "tradable": true
+        },
+        {
+          "id": "boss-2-skill-1",
+          "name": "破裂",
+          "tradable": false
+        },
+        {
+          "id": "boss-2-skill-2",
+          "name": "散阵枪",
+          "tradable": false
+        },
+        {
+          "id": "boss-2-skill-3",
+          "name": "仇恨咆哮",
+          "tradable": false
+        }
+      ]
+    },
+    {
+      "id": "boss-3",
+      "name": "程沐华",
+      "type": "普通",
+      "spirit": 640.0,
+      "stamina": 160.0,
+      "skills": [
+        {
+          "id": "boss-3-skill-0",
+          "name": "特制止血钳",
+          "tradable": false
+        },
+        {
+          "id": "boss-3-skill-1",
+          "name": "伤寒刺骨针",
+          "tradable": false
+        },
+        {
+          "id": "boss-3-skill-2",
+          "name": "麻沸散",
+          "tradable": false
+        },
+        {
+          "id": "boss-3-skill-3",
+          "name": "玄珠花蜜",
+          "tradable": true
+        },
+        {
+          "id": "boss-3-skill-4",
+          "name": "天养生息法",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-4",
+      "name": "杜姬欣/钱宗龙",
+      "type": "普通",
+      "spirit": 560.0,
+      "stamina": 240.0,
+      "skills": [
+        {
+          "id": "boss-4-skill-0",
+          "name": "麝鹿续命丸",
+          "tradable": false
+        },
+        {
+          "id": "boss-4-skill-1",
+          "name": "毓秀灵药",
+          "tradable": false
+        },
+        {
+          "id": "boss-4-skill-2",
+          "name": "凶刃乱舞",
+          "tradable": false
+        },
+        {
+          "id": "boss-4-skill-3",
+          "name": "杀红眼",
+          "tradable": false
+        },
+        {
+          "id": "boss-4-skill-4",
+          "name": "剑心通明",
+          "tradable": false
+        },
+        {
+          "id": "boss-4-skill-5",
+          "name": "帝骖龙翔",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-5",
+      "name": "秦雷",
+      "type": "普通",
+      "spirit": 240.0,
+      "stamina": 560.0,
+      "skills": [
+        {
+          "id": "boss-5-skill-0",
+          "name": "积气法门",
+          "tradable": false
+        },
+        {
+          "id": "boss-5-skill-1",
+          "name": "霞月长针",
+          "tradable": false
+        },
+        {
+          "id": "boss-5-skill-2",
+          "name": "暗狼袭爪",
+          "tradable": false
+        },
+        {
+          "id": "boss-5-skill-3",
+          "name": "黑煞落贪狼",
+          "tradable": false
+        },
+        {
+          "id": "boss-5-skill-4",
+          "name": "皓莲望月",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-6",
+      "name": "冯度",
+      "type": "普通",
+      "spirit": 560.0,
+      "stamina": 240.0,
+      "skills": [
+        {
+          "id": "boss-6-skill-0",
+          "name": "空穴来风",
+          "tradable": false
+        },
+        {
+          "id": "boss-6-skill-1",
+          "name": "通世金诀",
+          "tradable": true
+        },
+        {
+          "id": "boss-6-skill-2",
+          "name": "花钱消灾",
+          "tradable": false
+        },
+        {
+          "id": "boss-6-skill-3",
+          "name": "斗转金移",
+          "tradable": false
+        }
+      ]
+    },
+    {
+      "id": "boss-7",
+      "name": "肖童",
+      "type": "普通",
+      "spirit": 640.0,
+      "stamina": 160.0,
+      "skills": [
+        {
+          "id": "boss-7-skill-0",
+          "name": "七荒黑牙",
+          "tradable": false
+        },
+        {
+          "id": "boss-7-skill-1",
+          "name": "万蛇骨",
+          "tradable": false
+        },
+        {
+          "id": "boss-7-skill-2",
+          "name": "蝮蛇召唤",
+          "tradable": false
+        },
+        {
+          "id": "boss-7-skill-3",
+          "name": "炼蛇花召唤",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-8",
+      "name": "鬼影小次郎",
+      "type": "普通",
+      "spirit": 560.0,
+      "stamina": 240.0,
+      "skills": [
+        {
+          "id": "boss-8-skill-0",
+          "name": "一闪天诛",
+          "tradable": false
+        },
+        {
+          "id": "boss-8-skill-1",
+          "name": "一闪无痕",
+          "tradable": false
+        },
+        {
+          "id": "boss-8-skill-2",
+          "name": "初景白雨",
+          "tradable": false
+        },
+        {
+          "id": "boss-8-skill-3",
+          "name": "破竹返",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-9",
+      "name": "上衫勇刀",
+      "type": "普通",
+      "spirit": 160.0,
+      "stamina": 640.0,
+      "skills": [
+        {
+          "id": "boss-9-skill-0",
+          "name": "一刀柄锤",
+          "tradable": false
+        },
+        {
+          "id": "boss-9-skill-1",
+          "name": "一刀浮尘",
+          "tradable": false
+        },
+        {
+          "id": "boss-9-skill-2",
+          "name": "枪法散阵",
+          "tradable": false
+        },
+        {
+          "id": "boss-9-skill-3",
+          "name": "枪法铁林",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-10",
+      "name": "韦柔丝",
+      "type": "普通",
+      "spirit": 320.0,
+      "stamina": 480.0,
+      "skills": [
+        {
+          "id": "boss-10-skill-0",
+          "name": "三阳穿心掌",
+          "tradable": false
+        },
+        {
+          "id": "boss-10-skill-1",
+          "name": "血龙甩尾",
+          "tradable": false
+        },
+        {
+          "id": "boss-10-skill-2",
+          "name": "兔死狐悲",
+          "tradable": false
+        },
+        {
+          "id": "boss-10-skill-3",
+          "name": "逆心转脉",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-11",
+      "name": "源明雅",
+      "type": "普通",
+      "spirit": 800.0,
+      "stamina": 0.0,
+      "skills": [
+        {
+          "id": "boss-11-skill-0",
+          "name": "阴阳术退散",
+          "tradable": false
+        },
+        {
+          "id": "boss-11-skill-1",
+          "name": "土灵道符",
+          "tradable": false
+        },
+        {
+          "id": "boss-11-skill-2",
+          "name": "武傀召来",
+          "tradable": false
+        },
+        {
+          "id": "boss-11-skill-3",
+          "name": "尸鬼封烬",
+          "tradable": false
+        },
+        {
+          "id": "boss-11-skill-4",
+          "name": "五灵加护",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-12",
+      "name": "陆寻",
+      "type": "普通",
+      "spirit": 80.0,
+      "stamina": 720.0,
+      "skills": [
+        {
+          "id": "boss-12-skill-0",
+          "name": "奔狼踏月式",
+          "tradable": false
+        },
+        {
+          "id": "boss-12-skill-1",
+          "name": "踏月式掠途",
+          "tradable": false
+        },
+        {
+          "id": "boss-12-skill-2",
+          "name": "枪断晴川",
+          "tradable": false
+        },
+        {
+          "id": "boss-12-skill-3",
+          "name": "冥府滑行",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-13",
+      "name": "提多罗吒",
+      "type": "精英",
+      "spirit": 160.0,
+      "stamina": 640.0,
+      "skills": [
+        {
+          "id": "boss-13-skill-0",
+          "name": "陀罗曲静壁",
+          "tradable": false
+        },
+        {
+          "id": "boss-13-skill-1",
+          "name": "陀罗曲波纹",
+          "tradable": false
+        },
+        {
+          "id": "boss-13-skill-2",
+          "name": "华散曲黑洞",
+          "tradable": true
+        },
+        {
+          "id": "boss-13-skill-3",
+          "name": "陀罗曲破镜",
+          "tradable": false
+        }
+      ]
+    },
+    {
+      "id": "boss-14",
+      "name": "牡丹",
+      "type": "精英",
+      "spirit": 640.0,
+      "stamina": 160.0,
+      "skills": [
+        {
+          "id": "boss-14-skill-0",
+          "name": "气血蚕食法",
+          "tradable": false
+        },
+        {
+          "id": "boss-14-skill-1",
+          "name": "幽冥指",
+          "tradable": false
+        },
+        {
+          "id": "boss-14-skill-2",
+          "name": "火魅指",
+          "tradable": false
+        },
+        {
+          "id": "boss-14-skill-3",
+          "name": "血涂风暴",
+          "tradable": true
+        },
+        {
+          "id": "boss-14-skill-4",
+          "name": "内力潮汐",
+          "tradable": false
+        }
+      ]
+    },
+    {
+      "id": "boss-15",
+      "name": "谢云流",
+      "type": "精英",
+      "spirit": 400.0,
+      "stamina": 400.0,
+      "skills": [
+        {
+          "id": "boss-15-skill-0",
+          "name": "渐影凝视",
+          "tradable": false
+        },
+        {
+          "id": "boss-15-skill-1",
+          "name": "居合贯诚",
+          "tradable": false
+        },
+        {
+          "id": "boss-15-skill-2",
+          "name": "凌云步",
+          "tradable": true
+        },
+        {
+          "id": "boss-15-skill-3",
+          "name": "气刃法",
+          "tradable": false
+        },
+        {
+          "id": "boss-15-skill-4",
+          "name": "画影飞赴",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-16",
+      "name": "卫栖梧",
+      "type": "精英",
+      "spirit": 240.0,
+      "stamina": 560.0,
+      "skills": [
+        {
+          "id": "boss-16-skill-0",
+          "name": "梁上君子",
+          "tradable": true
+        },
+        {
+          "id": "boss-16-skill-1",
+          "name": "百步缠丝手",
+          "tradable": false
+        },
+        {
+          "id": "boss-16-skill-2",
+          "name": "傲然刀势",
+          "tradable": false
+        },
+        {
+          "id": "boss-16-skill-3",
+          "name": "飞云回转刀",
+          "tradable": false
+        }
+      ]
+    },
+    {
+      "id": "boss-17",
+      "name": "武逸青",
+      "type": "精英",
+      "spirit": 160.0,
+      "stamina": 640.0,
+      "skills": [
+        {
+          "id": "boss-17-skill-0",
+          "name": "土崩炸弹",
+          "tradable": false
+        },
+        {
+          "id": "boss-17-skill-1",
+          "name": "龙象般若功",
+          "tradable": true
+        },
+        {
+          "id": "boss-17-skill-2",
+          "name": "红蝠掠影",
+          "tradable": false
+        },
+        {
+          "id": "boss-17-skill-3",
+          "name": "暗龙火冲",
+          "tradable": false
+        }
+      ]
+    },
+    {
+      "id": "boss-18",
+      "name": "阿基修斯",
+      "type": "精英",
+      "spirit": 400.0,
+      "stamina": 400.0,
+      "skills": [
+        {
+          "id": "boss-18-skill-0",
+          "name": "孤傲战鰭",
+          "tradable": false
+        },
+        {
+          "id": "boss-18-skill-1",
+          "name": "鲨之息",
+          "tradable": true
+        },
+        {
+          "id": "boss-18-skill-2",
+          "name": "夺命突",
+          "tradable": false
+        },
+        {
+          "id": "boss-18-skill-3",
+          "name": "海蛇投枪",
+          "tradable": false
+        },
+        {
+          "id": "boss-18-skill-4",
+          "name": "夜叉探海诀",
+          "tradable": false
+        }
+      ]
+    },
+    {
+      "id": "boss-19",
+      "name": "钱南撰",
+      "type": "普通",
+      "spirit": 320.0,
+      "stamina": 480.0,
+      "skills": [
+        {
+          "id": "boss-19-skill-0",
+          "name": "角抵技巧",
+          "tradable": false
+        },
+        {
+          "id": "boss-19-skill-1",
+          "name": "三个铜钱",
+          "tradable": false
+        },
+        {
+          "id": "boss-19-skill-2",
+          "name": "乾坤一掷",
+          "tradable": false
+        },
+        {
+          "id": "boss-19-skill-3",
+          "name": "物超所值",
+          "tradable": false
+        },
+        {
+          "id": "boss-19-skill-4",
+          "name": "疯狂疾走",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-20",
+      "name": "悉达罗摩",
+      "type": "精英",
+      "spirit": 560.0,
+      "stamina": 240.0,
+      "skills": [
+        {
+          "id": "boss-20-skill-0",
+          "name": "灵虫召唤",
+          "tradable": false
+        },
+        {
+          "id": "boss-20-skill-1",
+          "name": "厄毒爆发",
+          "tradable": false
+        },
+        {
+          "id": "boss-20-skill-2",
+          "name": "厄毒掌法",
+          "tradable": false
+        },
+        {
+          "id": "boss-20-skill-3",
+          "name": "噬血夺魂",
+          "tradable": false
+        },
+        {
+          "id": "boss-20-skill-4",
+          "name": "蚀骨之花",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-21",
+      "name": "萧武宗",
+      "type": "精英",
+      "spirit": 320.0,
+      "stamina": 480.0,
+      "skills": [
+        {
+          "id": "boss-21-skill-0",
+          "name": "坠龙惊鸿",
+          "tradable": false
+        },
+        {
+          "id": "boss-21-skill-1",
+          "name": "临空夺珠",
+          "tradable": false
+        },
+        {
+          "id": "boss-21-skill-2",
+          "name": "霸山式",
+          "tradable": false
+        },
+        {
+          "id": "boss-21-skill-3",
+          "name": "修罗问剑",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-22",
+      "name": "司徒一一",
+      "type": "普通",
+      "spirit": 560.0,
+      "stamina": 240.0,
+      "skills": [
+        {
+          "id": "boss-22-skill-0",
+          "name": "铁炉机甲",
+          "tradable": false
+        },
+        {
+          "id": "boss-22-skill-1",
+          "name": "天工机甲龙",
+          "tradable": false
+        },
+        {
+          "id": "boss-22-skill-2",
+          "name": "天工机甲人",
+          "tradable": false
+        },
+        {
+          "id": "boss-22-skill-3",
+          "name": "机铠原型机",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-23",
+      "name": "阿依努尔",
+      "type": "普通",
+      "spirit": 320.0,
+      "stamina": 480.0,
+      "skills": [
+        {
+          "id": "boss-23-skill-0",
+          "name": "火焰吞吐",
+          "tradable": false
+        },
+        {
+          "id": "boss-23-skill-1",
+          "name": "引燃",
+          "tradable": false
+        },
+        {
+          "id": "boss-23-skill-2",
+          "name": "火焰之种",
+          "tradable": false
+        },
+        {
+          "id": "boss-23-skill-3",
+          "name": "火云",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-24",
+      "name": "武雪散",
+      "type": "精英",
+      "spirit": 320.0,
+      "stamina": 480.0,
+      "skills": [
+        {
+          "id": "boss-24-skill-0",
+          "name": "挽花",
+          "tradable": false
+        },
+        {
+          "id": "boss-24-skill-1",
+          "name": "戮身",
+          "tradable": true
+        },
+        {
+          "id": "boss-24-skill-2",
+          "name": "悬命线",
+          "tradable": false
+        },
+        {
+          "id": "boss-24-skill-3",
+          "name": "冰魄针",
+          "tradable": false
+        }
+      ]
+    },
+    {
+      "id": "boss-25",
+      "name": "迟驻",
+      "type": "精英",
+      "spirit": 480.0,
+      "stamina": 320.0,
+      "skills": [
+        {
+          "id": "boss-25-skill-0",
+          "name": "短歌一觞",
+          "tradable": false
+        },
+        {
+          "id": "boss-25-skill-1",
+          "name": "短歌垂链",
+          "tradable": true
+        },
+        {
+          "id": "boss-25-skill-2",
+          "name": "短歌万劫",
+          "tradable": false
+        },
+        {
+          "id": "boss-25-skill-3",
+          "name": "泉映幻歌",
+          "tradable": false
+        }
+      ]
+    },
+    {
+      "id": "boss-26",
+      "name": "拓跋思南",
+      "type": "精英",
+      "spirit": 160.0,
+      "stamina": 640.0,
+      "skills": [
+        {
+          "id": "boss-26-skill-0",
+          "name": "立剑势",
+          "tradable": true
+        },
+        {
+          "id": "boss-26-skill-1",
+          "name": "电掣昆吾",
+          "tradable": false
+        },
+        {
+          "id": "boss-26-skill-2",
+          "name": "退山凝",
+          "tradable": false
+        },
+        {
+          "id": "boss-26-skill-3",
+          "name": "震岳势",
+          "tradable": false
+        }
+      ]
+    },
+    {
+      "id": "boss-27",
+      "name": "青年谢云流",
+      "type": "精英",
+      "spirit": 400.0,
+      "stamina": 400.0,
+      "skills": [
+        {
+          "id": "boss-27-skill-0",
+          "name": "无我无剑",
+          "tradable": false
+        },
+        {
+          "id": "boss-27-skill-1",
+          "name": "剑飞惊天",
+          "tradable": true
+        },
+        {
+          "id": "boss-27-skill-2",
+          "name": "三环套月",
+          "tradable": false
+        },
+        {
+          "id": "boss-27-skill-3",
+          "name": "月流斩",
+          "tradable": false
+        }
+      ]
+    },
+    {
+      "id": "boss-28",
+      "name": "公孙二娘",
+      "type": "精英",
+      "spirit": 640.0,
+      "stamina": 160.0,
+      "skills": [
+        {
+          "id": "boss-28-skill-0",
+          "name": "霞袖回春",
+          "tradable": false
+        },
+        {
+          "id": "boss-28-skill-1",
+          "name": "云海听弦",
+          "tradable": false
+        },
+        {
+          "id": "boss-28-skill-2",
+          "name": "流霞点绛",
+          "tradable": false
+        },
+        {
+          "id": "boss-28-skill-3",
+          "name": "玉魄惊鸾",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-29",
+      "name": "程沐华·青年",
+      "type": "异象",
+      "spirit": 640.0,
+      "stamina": 160.0,
+      "skills": [
+        {
+          "id": "boss-29-skill-0",
+          "name": "灼脉逆血针",
+          "tradable": true
+        },
+        {
+          "id": "boss-29-skill-1",
+          "name": "扁鹊推手",
+          "tradable": false
+        },
+        {
+          "id": "boss-29-skill-2",
+          "name": "九转归元诀",
+          "tradable": false
+        }
+      ]
+    },
+    {
+      "id": "boss-30",
+      "name": "韦柔丝·困境",
+      "type": "异象",
+      "spirit": 160.0,
+      "stamina": 640.0,
+      "skills": [
+        {
+          "id": "boss-30-skill-0",
+          "name": "灵狐截刃",
+          "tradable": true
+        },
+        {
+          "id": "boss-30-skill-1",
+          "name": "血狱隐杀",
+          "tradable": false
+        },
+        {
+          "id": "boss-30-skill-2",
+          "name": "赤龙瞪目",
+          "tradable": false
+        }
+      ]
+    },
+    {
+      "id": "boss-31",
+      "name": "肖红",
+      "type": "异象",
+      "spirit": 640.0,
+      "stamina": 160.0,
+      "skills": [
+        {
+          "id": "boss-31-skill-0",
+          "name": "八擒",
+          "tradable": false
+        },
+        {
+          "id": "boss-31-skill-1",
+          "name": "含笑半步颠",
+          "tradable": false
+        },
+        {
+          "id": "boss-31-skill-2",
+          "name": "竹菱镖",
+          "tradable": true
+        }
+      ]
+    },
+    {
+      "id": "boss-32",
+      "name": "无精耐提升技能",
+      "type": "普通",
+      "spirit": 0.0,
+      "stamina": 0.0,
+      "skills": [
+        {
+          "id": "boss-32-skill-0",
+          "name": "毒指功",
+          "tradable": false
+        },
+        {
+          "id": "boss-32-skill-1",
+          "name": "枪法蝮蛇",
+          "tradable": false
+        },
+        {
+          "id": "boss-32-skill-2",
+          "name": "冲炎枪",
+          "tradable": false
+        },
+        {
+          "id": "boss-32-skill-3",
+          "name": "水遁水流闪",
+          "tradable": false
+        },
+        {
+          "id": "boss-32-skill-4",
+          "name": "阴雷之种",
+          "tradable": false
+        },
+        {
+          "id": "boss-32-skill-male-bear",
+          "name": "蛮熊碎颅击",
+          "tradable": false
+        }
+      ]
+    }
+  ]
+}

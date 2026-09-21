@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'boss_catalog_service.dart';
 import 'character_excel_import.dart';
 import 'seed_data.dart';
 import 'sync_service.dart';
@@ -196,8 +197,9 @@ class CharacterData {
       required this.school,
       required this.mind,
       required this.position,
-      required this.levels,
-      this.archived = false});
+      required Map<String, int> levels,
+      this.archived = false})
+      : levels = Map<String, int>.from(levels);
   final String id;
   String name;
   String gender;
@@ -238,10 +240,12 @@ class SkillStore extends ChangeNotifier {
   String selectedCharacterId = '';
   int page = 0;
   static const storageKey = 'battle_skill_data_v3';
+  static const bossCatalogVersionKey = 'boss_catalog_version';
   SharedPreferences? _prefs;
   final ThemeSettingsStore themeSettingsStore = ThemeSettingsStore();
   final SyncSettingsStore syncSettingsStore = SyncSettingsStore();
   final WebDavSyncService webDavSyncService = WebDavSyncService();
+  final BossCatalogService bossCatalogService = BossCatalogService();
   ThemeMode themeMode = ThemeMode.light;
   SyncConfig? syncConfig;
   DateTime? lastSyncAt;
@@ -250,6 +254,10 @@ class SkillStore extends ChangeNotifier {
   bool syncBusy = false;
   bool backupCheckBusy = false;
   List<RemoteBackup> remoteBackups = [];
+  RemoteBossCatalog? availableBossCatalog;
+  int bossCatalogVersion = 1;
+  bool bossCatalogCheckBusy = false;
+  String? bossCatalogCheckError;
   Timer? _autoSyncTimer;
   Timer? _changeSyncTimer;
   int _dataRevision = 0;
@@ -264,12 +272,88 @@ class SkillStore extends ChangeNotifier {
     syncConfig = await syncSettingsStore.load();
     lastSyncAt = await syncSettingsStore.loadLastSyncAt();
     currentRemoteBackupPath = await syncSettingsStore.loadCurrentBackupPath();
+    bossCatalogVersion = _prefs!.getInt(bossCatalogVersionKey) ?? 1;
     final raw = _prefs!.getString(storageKey);
     if (raw == null)
       _seed();
     else
       _restore(jsonDecode(raw) as Map<String, dynamic>);
     _scheduleAutoSync();
+    notifyListeners();
+    unawaited(checkForBossCatalogUpdate());
+  }
+
+  Future<bool> checkForBossCatalogUpdate() async {
+    if (bossCatalogCheckBusy) return false;
+    bossCatalogCheckBusy = true;
+    bossCatalogCheckError = null;
+    notifyListeners();
+    try {
+      final catalog = await bossCatalogService.fetch();
+      if (catalog.version > bossCatalogVersion) {
+        availableBossCatalog = catalog;
+        notifyListeners();
+        return true;
+      }
+      return false;
+    } catch (_) {
+      bossCatalogCheckError = '无法连接 Boss 技能数据服务，请稍后重试';
+      return false;
+    } finally {
+      bossCatalogCheckBusy = false;
+      notifyListeners();
+    }
+  }
+
+  void dismissBossCatalogUpdate() {
+    availableBossCatalog = null;
+    notifyListeners();
+  }
+
+  Future<void> applyBossCatalogUpdate() async {
+    final catalog = availableBossCatalog;
+    if (catalog == null) return;
+    final importedBosses = catalog.bosses
+        .map((item) => Boss.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    final previousSkillsById = <String, Skill>{
+      for (final boss in bosses)
+        for (final skill in boss.skills) skill.id: skill,
+    };
+    final previousSkillsByName = <String, Skill>{
+      for (final boss in bosses)
+        for (final skill in boss.skills) skill.name.trim().toLowerCase(): skill,
+    };
+
+    for (final character in characters) {
+      final nextLevels = <String, int>{};
+      for (final boss in importedBosses) {
+        for (final skill in boss.skills) {
+          final previous = previousSkillsById[skill.id] ??
+              previousSkillsByName[skill.name.trim().toLowerCase()];
+          nextLevels[skill.id] = previous == null
+              ? 1
+              : (character.levels[previous.id] ?? 1).clamp(1, 10);
+        }
+      }
+      character.levels
+        ..clear()
+        ..addAll(nextLevels);
+    }
+
+    bosses
+      ..clear()
+      ..addAll(importedBosses);
+    purpleSkills
+      ..clear()
+      ..addAll(bosses
+          .expand((boss) => boss.skills)
+          .where((skill) => skill.tradable)
+          .map((skill) => skill.name));
+    bossCatalogVersion = catalog.version;
+    availableBossCatalog = null;
+    await _prefs?.setInt(bossCatalogVersionKey, bossCatalogVersion);
+    _save();
     notifyListeners();
   }
 
@@ -861,7 +945,9 @@ class SkillStore extends ChangeNotifier {
   Future<bool> exportBosses() async {
     final data = {
       'type': 'baizhan-bosses',
-      'version': 1,
+      'version': bossCatalogVersion + 1,
+      'updatedAt': DateTime.now().toUtc().toIso8601String(),
+      'notes': 'Boss 技能数据更新',
       'bosses': bosses.map((boss) => boss.toJson()).toList()
     };
     final bytes = Uint8List.fromList(utf8.encode(jsonEncode(data)));
@@ -1146,7 +1232,11 @@ class Shell extends StatelessWidget {
   Widget build(BuildContext context) => LayoutBuilder(
         builder: (context, constraints) {
           final wide = constraints.maxWidth >= 800;
-          final content = Column(children: [Expanded(child: _page(context))]);
+          final content = Column(children: [
+            if (store.availableBossCatalog != null)
+              _BossCatalogUpdateBanner(store: store),
+            Expanded(child: _page(context))
+          ]);
           return Scaffold(
             body: SafeArea(
                 child: wide
@@ -1198,6 +1288,85 @@ class Shell extends StatelessWidget {
         7 => SyncBackupPage(store: store),
         _ => HomePage(store: store)
       };
+}
+
+class _BossCatalogUpdateBanner extends StatelessWidget {
+  const _BossCatalogUpdateBanner({required this.store});
+  final SkillStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final catalog = store.availableBossCatalog!;
+    return Material(
+        color: const Color(0xffe8f3ee),
+        child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+            child: Row(children: [
+              const Icon(Icons.system_update_alt, color: teal, size: 19),
+              const SizedBox(width: 9),
+              Expanded(
+                  child: Text('发现 Boss 技能数据更新（版本 ${catalog.version}）',
+                      style: const TextStyle(
+                          color: ink, fontWeight: FontWeight.w600))),
+              TextButton(
+                  onPressed: store.dismissBossCatalogUpdate,
+                  child: const Text('稍后')),
+              const SizedBox(width: 4),
+              FilledButton(
+                  onPressed: () =>
+                      _showBossCatalogUpdateDialog(context, store, catalog),
+                  child: const Text('查看更新'))
+            ])));
+  }
+}
+
+Future<void> _showBossCatalogUpdateDialog(
+    BuildContext context, SkillStore store, RemoteBossCatalog catalog) async {
+  await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+              title: const Text('Boss 技能数据更新'),
+              content: SizedBox(
+                  width: 420,
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text('数据版本 ${catalog.version} · '
+                            '${catalog.bosses.length} 个 Boss')),
+                    if (catalog.updatedAt.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text('更新时间：${catalog.updatedAt}',
+                              style:
+                                  const TextStyle(color: muted, fontSize: 12)))
+                    ],
+                    if (catalog.notes.isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(catalog.notes))
+                    ],
+                    const SizedBox(height: 14),
+                    const Text('更新会同步 Boss 基础信息和技能列表，并按技能保留角色现有重数。',
+                        style: TextStyle(color: muted, fontSize: 12))
+                  ])),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text('取消')),
+                FilledButton(
+                    onPressed: () async {
+                      await store.applyBossCatalogUpdate();
+                      if (dialogContext.mounted) Navigator.pop(dialogContext);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                            content:
+                                Text('Boss 技能数据已更新到版本 ${catalog.version}')));
+                      }
+                    },
+                    child: const Text('立即更新'))
+              ]));
 }
 
 class SideNav extends StatelessWidget {
@@ -3497,7 +3666,18 @@ class BossPage extends StatelessWidget {
           OutlinedButton.icon(
               onPressed: () => _importBosses(context),
               icon: const Icon(Icons.file_download_outlined, size: 17),
-              label: const Text('增量导入'))
+              label: const Text('增量导入')),
+          OutlinedButton.icon(
+              onPressed: store.bossCatalogCheckBusy
+                  ? null
+                  : () => _checkCatalog(context),
+              icon: store.bossCatalogCheckBusy
+                  ? const SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.refresh, size: 17),
+              label: const Text('检查数据更新'))
         ]),
         const SizedBox(height: 14),
         ReorderableListView.builder(
@@ -3595,6 +3775,16 @@ class BossPage extends StatelessWidget {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('导入失败：$error')));
     }
+  }
+
+  Future<void> _checkCatalog(BuildContext context) async {
+    final found = await store.checkForBossCatalogUpdate();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(store.bossCatalogCheckError ??
+            (found
+                ? '发现新的 Boss 技能数据'
+                : '当前已是最新 Boss 技能数据（版本 ${store.bossCatalogVersion}）'))));
   }
 }
 

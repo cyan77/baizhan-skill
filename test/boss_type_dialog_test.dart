@@ -1,4 +1,5 @@
 import 'package:baizhan_skill/main.dart';
+import 'package:baizhan_skill/boss_catalog_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -249,5 +250,49 @@ void main() {
     expect(store.activeCharacters.map((item) => item.id), ['second', 'first']);
     expect(store.characters.map((item) => item.id),
         ['second', 'archived', 'first']);
+  });
+
+  test('remote Boss updates preserve ranks and default new skills to one',
+      () async {
+    final store = SkillStore();
+    store.bosses.add(Boss(
+        id: 'boss-a',
+        name: '旧 Boss',
+        spirit: 400,
+        stamina: 400,
+        skills: [Skill(id: 'skill-a', name: '保留技能')]));
+    store.characters.add(CharacterData(
+        id: 'character',
+        name: '角色',
+        gender: '女性',
+        school: '未设置',
+        mind: '未设置',
+        position: 'dps',
+        levels: const {'skill-a': 8}));
+    store.availableBossCatalog = const RemoteBossCatalog(
+        version: 2,
+        updatedAt: '2026-09-21',
+        notes: '测试更新',
+        bosses: [
+          {
+            'id': 'boss-a',
+            'name': '新 Boss',
+            'type': '精英',
+            'spirit': 240,
+            'stamina': 560,
+            'skills': [
+              {'id': 'skill-a', 'name': '保留技能', 'tradable': false},
+              {'id': 'skill-b', 'name': '新增技能', 'tradable': true}
+            ]
+          }
+        ]);
+
+    await store.applyBossCatalogUpdate();
+
+    expect(store.bossCatalogVersion, 2);
+    expect(store.bosses.single.name, '新 Boss');
+    expect(store.characters.single.levels['skill-a'], 8);
+    expect(store.characters.single.levels['skill-b'], 1);
+    expect(store.purpleSkills, contains('新增技能'));
   });
 }
