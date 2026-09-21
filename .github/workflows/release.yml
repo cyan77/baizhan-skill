@@ -38,16 +38,25 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath BaizhanSkill-Windows-x64.zip
 
+      - name: Upload Windows workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BaizhanSkill-Windows-x64
+          path: BaizhanSkill-Windows-x64.zip
+          if-no-files-found: error
+
       - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          name: v0.1.0 首次公开发行
+          name: ${{ github.ref_name }}
           files: BaizhanSkill-Windows-x64.zip
           body: |
-            百战异闻录技能管理 v0.1.0
+            百战异闻录技能管理 ${{ github.ref_name }}
 
             - 多角色技能重数、精神值、耐力值和通本需求管理
             - 支持 Excel、技能截图和统一重数快速录入角色
             - 支持重要技能、紫书及全部技能筛选统计
             - 支持 Boss 技能维护、排序、导入导出及在线数据更新
             - 支持本地备份和带冲突保护的 WebDAV 多设备同步
+            - Windows 支持 Excel 表格导入和系统中文 OCR 图片识别

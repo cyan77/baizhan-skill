@@ -5200,8 +5200,8 @@ Future<Map<String, int>?> pickCharacterImageLevels(
   if (picked == null) return null;
   final path = picked.files.single.path;
   if (path == null) throw const FormatException('无法读取图片');
-  if (!Platform.isMacOS) {
-    throw const FormatException('当前图片识别暂时仅支持 macOS');
+  if (!Platform.isMacOS && !Platform.isWindows) {
+    throw const FormatException('当前图片识别支持 macOS 和 Windows');
   }
   const channel = MethodChannel('baizhan_skill/ocr');
   final raw = await channel
