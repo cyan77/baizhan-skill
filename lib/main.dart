@@ -1,0 +1,4965 @@
+import 'dart:convert';
+import 'dart:async';
+import 'dart:io';
+import 'dart:math' as math;
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'character_excel_import.dart';
+import 'seed_data.dart';
+import 'sync_service.dart';
+import 'theme_settings.dart';
+
+const navy = Color(0xffffffff);
+const ink = Color(0xff26332f);
+const muted = Color(0xff76857f);
+const canvas = Color(0xffffffff);
+const line = Color(0xffe4eae7);
+const teal = Color(0xff3c8c72);
+const purple = Color(0xff8d54c7);
+const gold = Color(0xffb56a18);
+
+const schoolOptions = [
+  '未设置',
+  '万花',
+  '七秀',
+  '少林',
+  '天策',
+  '纯阳',
+  '藏剑',
+  '五毒',
+  '唐门',
+  '明教',
+  '丐帮',
+  '苍云',
+  '长歌',
+  '霸刀',
+  '蓬莱',
+  '衍天宗',
+  '药宗',
+  '刀宗',
+  '凌雪阁',
+  '无方',
+  '北天药宗'
+];
+
+const mindOptions = [
+  '未设置',
+  '花间游',
+  '离经易道',
+  '冰心诀',
+  '云裳心经',
+  '易筋经',
+  '洗髓经',
+  '傲血战意',
+  '铁牢律',
+  '太虚剑意',
+  '紫霞功',
+  '问水诀',
+  '山居剑意',
+  '毒经',
+  '补天诀',
+  '惊羽诀',
+  '天罗诡道',
+  '焚影圣诀',
+  '明尊琉璃体',
+  '笑尘诀',
+  '分山劲',
+  '铁骨衣',
+  '莫问',
+  '相知',
+  '北傲诀',
+  '凌海诀',
+  '蓬莱诀',
+  '隐龙诀',
+  '太玄经',
+  '孤锋诀',
+  '山海心诀',
+  '周天功',
+  '幽罗引',
+  '无方',
+  '灵素'
+];
+
+const positionOptions = ['t', '奶', 'dps'];
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final store = SkillStore();
+  await store.load();
+  runApp(BattleSkillsApp(store: store));
+}
+
+class Skill {
+  Skill({required this.id, required this.name, this.tradable = false});
+  final String id;
+  String name;
+  bool tradable;
+  Map<String, dynamic> toJson() =>
+      {'id': id, 'name': name, 'tradable': tradable};
+  factory Skill.fromJson(Map<String, dynamic> json) => Skill(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      tradable: json['tradable'] as bool? ?? false);
+}
+
+class Boss {
+  Boss(
+      {required this.id,
+      required this.name,
+      required this.spirit,
+      required this.stamina,
+      required this.skills,
+      this.type = '普通'});
+  final String id;
+  String name;
+  String type;
+  double spirit;
+  double stamina;
+  final List<Skill> skills;
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'type': type,
+        'spirit': spirit,
+        'stamina': stamina,
+        'skills': skills.map((skill) => skill.toJson()).toList()
+      };
+  factory Boss.fromJson(Map<String, dynamic> json) => Boss(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      type: bossTypeOptions.contains(json['type'])
+          ? json['type'] as String
+          : '普通',
+      spirit: (json['spirit'] as num).toDouble(),
+      stamina: (json['stamina'] as num).toDouble(),
+      skills: (json['skills'] as List)
+          .map((item) => Skill.fromJson(Map<String, dynamic>.from(item as Map)))
+          .toList());
+}
+
+const bossTypeOptions = ['普通', '精英', '异象'];
+
+String bossNameForGender(Boss boss, String gender) {
+  if (boss.name == '杜姬欣' || boss.name == '杜姬欣/钱宗龙') {
+    return gender == '男性' ? '钱宗龙' : '杜姬欣';
+  }
+  return boss.name;
+}
+
+String skillNameForGender(Skill skill, String gender) {
+  if (gender != '男性') return skill.name;
+  return const {'剑心通明': '巨猿劈山', '帝骖龙翔': '顽抗'}[skill.name] ?? skill.name;
+}
+
+bool skillAppliesToGender(Skill skill, String gender) =>
+    skill.name != '蛮熊碎颅击' || gender == '男性';
+
+String managementSkillName(Skill skill) =>
+    const {'剑心通明': '剑心通明/巨猿劈山', '帝骖龙翔': '帝骖龙翔/顽抗'}[skill.name] ?? skill.name;
+
+double bossStatForGender(Boss boss, String gender, bool spirit) {
+  if (gender == '男性' && (boss.name == '杜姬欣' || boss.name == '杜姬欣/钱宗龙')) {
+    return spirit ? 240 : 560;
+  }
+  return spirit ? boss.spirit : boss.stamina;
+}
+
+Map<String, int> normalizeGenderSkillLevels(
+    SkillStore store, String gender, Map<String, int> imported) {
+  final normalized = <String, int>{};
+  for (final boss in store.bosses) {
+    for (final skill in boss.skills) {
+      final level =
+          imported[skillNameForGender(skill, gender)] ?? imported[skill.name];
+      if (level != null) normalized[skill.name] = level;
+    }
+  }
+  return normalized;
+}
+
+class BossImportResult {
+  const BossImportResult(
+      {required this.bossesAdded, required this.skillsAdded});
+  final int bossesAdded;
+  final int skillsAdded;
+}
+
+class CharacterData {
+  CharacterData(
+      {required this.id,
+      required this.name,
+      required this.gender,
+      required this.school,
+      required this.mind,
+      required this.position,
+      required this.levels,
+      this.archived = false});
+  final String id;
+  String name;
+  String gender;
+  String school;
+  String mind;
+  String position;
+  final Map<String, int> levels;
+  bool archived;
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'gender': gender,
+        'school': school,
+        'mind': mind,
+        'position': position,
+        'levels': levels,
+        'archived': archived
+      };
+  factory CharacterData.fromJson(Map<String, dynamic> json) {
+    return CharacterData(
+        id: json['id'] as String,
+        name: json['name'] as String,
+        gender: json['gender'] as String? ?? '女性',
+        school: json['school'] as String? ?? '未设置',
+        mind: json['mind'] as String? ?? '未设置',
+        position: json['position'] as String? ?? 'dps',
+        levels: (json['levels'] as Map).map(
+            (key, value) => MapEntry(key.toString(), (value as num).toInt())),
+        archived: json['archived'] as bool? ?? false);
+  }
+}
+
+class SkillStore extends ChangeNotifier {
+  final List<CharacterData> characters = [];
+  final List<Boss> bosses = [];
+  final List<String> importantSkills = [];
+  final List<String> purpleSkills = [];
+  String selectedCharacterId = '';
+  int page = 0;
+  static const storageKey = 'battle_skill_data_v3';
+  SharedPreferences? _prefs;
+  final ThemeSettingsStore themeSettingsStore = ThemeSettingsStore();
+  final SyncSettingsStore syncSettingsStore = SyncSettingsStore();
+  final WebDavSyncService webDavSyncService = WebDavSyncService();
+  ThemeMode themeMode = ThemeMode.light;
+  SyncConfig? syncConfig;
+  DateTime? lastSyncAt;
+  String? currentRemoteBackupPath;
+  String? syncMessage;
+  bool syncBusy = false;
+  bool backupCheckBusy = false;
+  List<RemoteBackup> remoteBackups = [];
+  Timer? _autoSyncTimer;
+  Timer? _changeSyncTimer;
+  int _dataRevision = 0;
+  int _syncedRevision = 0;
+  CharacterData? get selectedCharacter => _findCharacter(selectedCharacterId);
+  List<CharacterData> get activeCharacters =>
+      characters.where((item) => !item.archived).toList();
+
+  Future<void> load() async {
+    _prefs = await SharedPreferences.getInstance();
+    themeMode = await themeSettingsStore.load();
+    syncConfig = await syncSettingsStore.load();
+    lastSyncAt = await syncSettingsStore.loadLastSyncAt();
+    currentRemoteBackupPath = await syncSettingsStore.loadCurrentBackupPath();
+    final raw = _prefs!.getString(storageKey);
+    if (raw == null)
+      _seed();
+    else
+      _restore(jsonDecode(raw) as Map<String, dynamic>);
+    _scheduleAutoSync();
+    notifyListeners();
+  }
+
+  void _seed() {
+    final data = seedData;
+    final purpleNames = (data['purple'] as List).cast<String>().toSet();
+    final rawBosses = data['bosses'] as List;
+    for (var i = 0; i < rawBosses.length; i++) {
+      final raw = Map<String, dynamic>.from(rawBosses[i] as Map);
+      bosses.add(Boss(
+          id: 'boss-$i',
+          name: raw['name'] == '杜姬欣' ? '杜姬欣/钱宗龙' : raw['name'] as String,
+          spirit: (raw['sp'] as num).toDouble(),
+          stamina: (raw['st'] as num).toDouble(),
+          skills: (raw['skills'] as List)
+              .asMap()
+              .entries
+              .map((entry) => Skill(
+                  id: 'boss-$i-skill-${entry.key}',
+                  name: entry.value as String,
+                  tradable: purpleNames.contains(entry.value)))
+              .toList()));
+    }
+    final rawNine = Map<String, dynamic>.from(data['nine'] as Map);
+    final rawCharacters = data['characters'] as List;
+    for (var i = 0; i < rawCharacters.length; i++) {
+      final raw = Map<String, dynamic>.from(rawCharacters[i] as Map);
+      final levels = <String, int>{};
+      for (final boss in bosses)
+        for (final skill in boss.skills) levels[skill.id] = 10;
+      final overrides =
+          Map<String, dynamic>.from(rawNine[raw['name']] as Map? ?? {});
+      overrides.forEach((key, value) {
+        final pieces = key.split(':');
+        if (pieces.length == 2)
+          levels['boss-${pieces[0]}-skill-${pieces[1]}'] =
+              (value as num).toInt();
+      });
+      final isFemale = i == 0;
+      characters.add(CharacterData(
+          id: 'character-$i',
+          name: isFemale ? '示例女角色' : '示例男角色',
+          gender: isFemale ? '女性' : '男性',
+          school: isFemale ? '万花' : '天策',
+          mind: isFemale ? '花间游' : '傲血战意',
+          position: 'dps',
+          levels: levels));
+      if (i == 1) break;
+    }
+    importantSkills.addAll((data['summary'] as List).cast<String>());
+    purpleSkills.addAll((data['purple'] as List).cast<String>());
+    _ensureGenderSpecificSkills();
+    selectedCharacterId = characters.first.id;
+    _save();
+  }
+
+  void _restore(Map<String, dynamic> data) {
+    characters.addAll((data['characters'] as List).map((item) =>
+        CharacterData.fromJson(Map<String, dynamic>.from(item as Map))));
+    bosses.addAll((data['bosses'] as List)
+        .map((item) => Boss.fromJson(Map<String, dynamic>.from(item as Map))));
+    for (final boss in bosses) {
+      if (boss.name == '杜姬欣') boss.name = '杜姬欣/钱宗龙';
+    }
+    _ensureGenderSpecificSkills();
+    importantSkills.addAll((data['importantSkills'] as List).cast<String>());
+    purpleSkills.addAll((data['purpleSkills'] as List).cast<String>());
+    for (final boss in bosses)
+      for (final skill in boss.skills)
+        skill.tradable = skill.tradable || purpleSkills.contains(skill.name);
+    selectedCharacterId =
+        data['selectedCharacterId'] as String? ?? characters.first.id;
+    page = (data['page'] as int? ?? 0).clamp(0, 7);
+  }
+
+  void _ensureGenderSpecificSkills() {
+    final boss = bosses.where((item) => item.name == '无精耐提升技能').firstOrNull;
+    if (boss == null || boss.skills.any((skill) => skill.name == '蛮熊碎颅击')) {
+      return;
+    }
+    final skill = Skill(id: '${boss.id}-skill-male-bear', name: '蛮熊碎颅击');
+    boss.skills.add(skill);
+    for (final character in characters) {
+      character.levels[skill.id] = 1;
+    }
+  }
+
+  Map<String, dynamic> _json() => {
+        'characters': characters.map((item) => item.toJson()).toList(),
+        'bosses': bosses.map((item) => item.toJson()).toList(),
+        'importantSkills': importantSkills,
+        'purpleSkills': purpleSkills,
+        'selectedCharacterId': selectedCharacterId,
+        'page': page
+      };
+  void _save() {
+    _prefs?.setString(storageKey, jsonEncode(_json()));
+    _dataRevision++;
+    _scheduleChangeSync();
+  }
+
+  void _scheduleAutoSync() {
+    _autoSyncTimer?.cancel();
+    final config = syncConfig;
+    if (config == null || !config.isValid || config.autoSyncMinutes <= 0) {
+      return;
+    }
+    _autoSyncTimer = Timer.periodic(Duration(minutes: config.autoSyncMinutes),
+        (_) => syncNow(silent: true));
+  }
+
+  void _scheduleChangeSync() {
+    _changeSyncTimer?.cancel();
+    final config = syncConfig;
+    if (_dataRevision <= _syncedRevision || config == null || !config.isValid) {
+      return;
+    }
+    _changeSyncTimer = Timer(const Duration(seconds: 2), () {
+      if (_dataRevision > _syncedRevision) unawaited(syncNow(silent: true));
+    });
+  }
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    if (themeMode == mode) return;
+    themeMode = mode;
+    await themeSettingsStore.save(mode);
+    notifyListeners();
+  }
+
+  Future<void> saveSyncConfig(SyncConfig config) async {
+    await syncSettingsStore.save(config);
+    syncConfig = config;
+    _scheduleAutoSync();
+    _scheduleChangeSync();
+    notifyListeners();
+  }
+
+  Future<bool> testSyncConnection() async {
+    final config = syncConfig;
+    if (config == null || !config.isValid) {
+      syncMessage = '尚未配置完整的 WebDAV';
+      notifyListeners();
+      return false;
+    }
+    try {
+      await webDavSyncService.testConnection(config);
+      syncMessage = '连接成功';
+      notifyListeners();
+      return true;
+    } catch (error) {
+      syncMessage = '连接失败：$error';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> syncNow({bool silent = false}) async {
+    if (syncBusy) return false;
+    final config = syncConfig;
+    if (config == null || !config.isValid) {
+      if (!silent) {
+        syncMessage = '尚未配置完整的 WebDAV';
+        notifyListeners();
+      }
+      return false;
+    }
+    syncBusy = true;
+    notifyListeners();
+    final revisionAtStart = _dataRevision;
+    try {
+      final backup =
+          await webDavSyncService.upload(config, jsonEncode(_json()));
+      lastSyncAt = DateTime.now();
+      currentRemoteBackupPath = backup.path;
+      _syncedRevision = revisionAtStart;
+      await syncSettingsStore.saveLastSyncAt(lastSyncAt!);
+      await syncSettingsStore.saveCurrentBackupPath(backup.path);
+      syncMessage = '已同步 · ${backup.name}';
+      return true;
+    } catch (error) {
+      syncMessage = '同步失败：$error';
+      return false;
+    } finally {
+      syncBusy = false;
+      notifyListeners();
+      _scheduleChangeSync();
+    }
+  }
+
+  Future<bool> loadRemoteBackups() async {
+    final config = syncConfig;
+    if (config == null || !config.isValid) {
+      syncMessage = '尚未配置完整的 WebDAV';
+      notifyListeners();
+      return false;
+    }
+    backupCheckBusy = true;
+    notifyListeners();
+    try {
+      remoteBackups = await webDavSyncService.listBackups(config);
+      syncMessage = '已读取 ${remoteBackups.length} 个远程备份';
+      return true;
+    } catch (error) {
+      syncMessage = '读取失败：$error';
+      return false;
+    } finally {
+      backupCheckBusy = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> restoreRemoteBackup(RemoteBackup backup) async {
+    final config = syncConfig;
+    if (config == null || !config.isValid || syncBusy) return false;
+    syncBusy = true;
+    notifyListeners();
+    try {
+      final raw = await webDavSyncService.downloadBackup(config, backup);
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      characters.clear();
+      bosses.clear();
+      importantSkills.clear();
+      purpleSkills.clear();
+      _restore(data);
+      _dataRevision = 0;
+      _syncedRevision = 0;
+      currentRemoteBackupPath = backup.path;
+      lastSyncAt = DateTime.now();
+      await syncSettingsStore.saveLastSyncAt(lastSyncAt!);
+      await syncSettingsStore.saveCurrentBackupPath(backup.path);
+      _save();
+      _syncedRevision = _dataRevision;
+      syncMessage = '已恢复 · ${backup.name}';
+      return true;
+    } catch (error) {
+      syncMessage = '恢复失败：$error';
+      return false;
+    } finally {
+      syncBusy = false;
+      notifyListeners();
+    }
+  }
+
+  CharacterData? _findCharacter(String id) {
+    for (final character in characters)
+      if (character.id == id) return character;
+    return null;
+  }
+
+  Boss? bossForSkill(String skillId) {
+    for (final boss in bosses)
+      if (boss.skills.any((skill) => skill.id == skillId)) return boss;
+    return null;
+  }
+
+  Skill? findSkill(String name) {
+    for (final boss in bosses)
+      for (final skill in boss.skills) if (skill.name == name) return skill;
+    return null;
+  }
+
+  int level(String characterId, String skillId) =>
+      _findCharacter(characterId)?.levels[skillId] ?? 0;
+  void selectCharacter(String id) {
+    selectedCharacterId = id;
+    _save();
+    notifyListeners();
+  }
+
+  void setPage(int value) {
+    page = value;
+    _save();
+    notifyListeners();
+  }
+
+  void setLevel(String skillId, int value) {
+    final character = selectedCharacter;
+    if (character == null) return;
+    character.levels[skillId] = value.clamp(0, 10).toInt();
+    _save();
+    notifyListeners();
+  }
+
+  void setLevelForAllCharacters(String skillId, int value) {
+    final normalized = value.clamp(0, 10).toInt();
+    for (final character in characters) {
+      character.levels[skillId] = normalized;
+    }
+    _save();
+    notifyListeners();
+  }
+
+  void setAllSkillLevels(int value, {String? characterId}) {
+    final normalized = value.clamp(1, 10).toInt();
+    final targets = characterId == null
+        ? characters
+        : characters.where((character) => character.id == characterId);
+    for (final character in targets) {
+      for (final boss in bosses) {
+        for (final skill in boss.skills) {
+          character.levels[skill.id] = normalized;
+        }
+      }
+    }
+    _save();
+    notifyListeners();
+  }
+
+  int rankFor(String characterId, Boss boss) {
+    final character = _findCharacter(characterId);
+    if (character == null) return 0;
+    final values = boss.skills
+        .where((skill) => skillAppliesToGender(skill, character.gender))
+        .map((skill) => level(characterId, skill.id))
+        .toList();
+    if (values.isEmpty || values.any((value) => value < 1)) return 0;
+    return values.reduce((a, b) => a < b ? a : b);
+  }
+
+  double _multiplier(int rank) =>
+      const [0, 1, 2, 3, 4, 5, 7, 10, 15, 22.5, 33.75][rank].toDouble();
+  double stat(String characterId, bool spirit) {
+    final character = _findCharacter(characterId);
+    if (character == null) return 0;
+    var result = 10000.0;
+    for (final boss in bosses) {
+      final current = rankFor(characterId, boss);
+      final base = bossStatForGender(boss, character.gender, spirit);
+      result += base * _multiplier(current);
+    }
+    return result + thresholdBonus(characterId);
+  }
+
+  double computedBaseStat(String characterId, bool spirit) => 10000;
+
+  double thresholdBonus(String characterId) {
+    final character = _findCharacter(characterId);
+    if (character == null) return 0;
+    final values = bosses
+        .expand((boss) => boss.skills)
+        .where((skill) => skillAppliesToGender(skill, character.gender))
+        .map((skill) => character.levels[skill.id] ?? 0);
+    const bonus = [
+      0,
+      100,
+      200,
+      300,
+      400,
+      2000,
+      6000,
+      8000,
+      10000,
+      12000,
+      14000
+    ];
+    return List<int>.generate(10, (index) => index + 1)
+        .where((value) => values.where((level) => level >= value).length > 2)
+        .fold<double>(0, (sum, value) => sum + bonus[value]);
+  }
+
+  int skillLevelForName(String characterId, String name) {
+    final matches = <int>[];
+    for (final boss in bosses)
+      for (final skill in boss.skills)
+        if (skill.name == name) matches.add(level(characterId, skill.id));
+    return matches.isEmpty ? 0 : matches.reduce((a, b) => a > b ? a : b);
+  }
+
+  int highestSkillLevelForName(String name) {
+    var highest = 0;
+    for (final character in activeCharacters) {
+      final value = skillLevelForName(character.id, name);
+      if (value > highest) highest = value;
+    }
+    return highest;
+  }
+
+  Map<String, int> bookNeeds(String characterId) {
+    final values = _findCharacter(characterId)?.levels.values ?? const <int>[];
+    return {
+      '通本1': values.where((value) => value < 4).length,
+      '通本2': values.where((value) => value < 5).length,
+      '通本3': values.fold<int>(
+          0,
+          (sum, value) =>
+              sum +
+              const [
+                8,
+                7,
+                5,
+                4,
+                3,
+                2,
+                1,
+                0,
+                0,
+                0,
+                0
+              ][value.clamp(0, 10).toInt()]),
+      '通本4': values.fold<int>(
+          0, (sum, value) => sum + (8 - value).clamp(0, 8).toInt())
+    };
+  }
+
+  void addImportantSkill(String name) {
+    final normalized = name.trim();
+    final isExistingSkill = bosses
+        .expand((boss) => boss.skills)
+        .any((skill) => skill.name == normalized);
+    if (normalized.isEmpty ||
+        !isExistingSkill ||
+        importantSkills.contains(normalized)) return;
+    importantSkills.add(normalized);
+    _save();
+    notifyListeners();
+  }
+
+  void removeImportantSkill(String name) {
+    importantSkills.remove(name);
+    _save();
+    notifyListeners();
+  }
+
+  void addBoss(
+      {required String name,
+      String type = '普通',
+      required double spirit,
+      required double stamina,
+      required List<SkillInputData> skillInputs}) {
+    final bossId = 'boss-${DateTime.now().microsecondsSinceEpoch}';
+    final boss = Boss(
+        id: bossId,
+        name: name.trim(),
+        type: type,
+        spirit: spirit,
+        stamina: stamina,
+        skills: skillInputs
+            .where((item) => item.name.trim().isNotEmpty)
+            .map((item) => item.name.trim())
+            .toSet()
+            .toList()
+            .asMap()
+            .entries
+            .map((entry) => Skill(
+                id: '$bossId-skill-${entry.key}',
+                name: entry.value,
+                tradable: skillInputs
+                    .firstWhere((item) => item.name.trim() == entry.value)
+                    .tradable))
+            .toList());
+    bosses.add(boss);
+    for (final character in characters)
+      for (final skill in boss.skills) character.levels[skill.id] = 1;
+    _save();
+    notifyListeners();
+  }
+
+  void addSkillToBoss(Boss boss, String name, {bool tradable = false}) {
+    if (name.trim().isEmpty ||
+        boss.skills.any((skill) => skill.name == name.trim())) return;
+    final skill = Skill(
+        id: '${boss.id}-skill-${boss.skills.length}',
+        name: name.trim(),
+        tradable: tradable);
+    boss.skills.add(skill);
+    if (tradable && !purpleSkills.contains(skill.name)) {
+      purpleSkills.add(skill.name);
+    }
+    for (final character in characters) character.levels[skill.id] = 1;
+    _save();
+    notifyListeners();
+  }
+
+  void updateBoss(Boss boss,
+      {required String name,
+      required String type,
+      required double spirit,
+      required double stamina}) {
+    boss.name = name.trim();
+    boss.type = type;
+    boss.spirit = spirit;
+    boss.stamina = stamina;
+    _save();
+    notifyListeners();
+  }
+
+  void reorderBoss(int oldIndex, int newIndex) {
+    if (oldIndex < 0 || oldIndex >= bosses.length) return;
+    if (newIndex > oldIndex) newIndex--;
+    if (newIndex < 0 || newIndex >= bosses.length || oldIndex == newIndex) {
+      return;
+    }
+    final boss = bosses.removeAt(oldIndex);
+    bosses.insert(newIndex, boss);
+    _save();
+    notifyListeners();
+  }
+
+  void reorderCharacter(String characterId, String targetCharacterId) {
+    if (characterId == targetCharacterId) return;
+    final oldIndex = characters.indexWhere((item) => item.id == characterId);
+    final newIndex =
+        characters.indexWhere((item) => item.id == targetCharacterId);
+    if (oldIndex < 0 || newIndex < 0) return;
+    final character = characters[oldIndex];
+    characters[oldIndex] = characters[newIndex];
+    characters[newIndex] = character;
+    _save();
+    notifyListeners();
+  }
+
+  void removeBoss(Boss boss) {
+    bosses.removeWhere((item) => item.id == boss.id);
+    for (final character in characters) {
+      for (final skill in boss.skills) {
+        character.levels.remove(skill.id);
+      }
+    }
+    for (final skill in boss.skills) {
+      if (!bosses
+          .expand((item) => item.skills)
+          .any((other) => other.name == skill.name && other.tradable)) {
+        purpleSkills.remove(skill.name);
+      }
+    }
+    _save();
+    notifyListeners();
+  }
+
+  void renameSkill(Skill skill, String name) {
+    final nextName = name.trim();
+    if (nextName.isEmpty || nextName == skill.name) return;
+    final oldName = skill.name;
+    skill.name = nextName;
+    for (var index = 0; index < importantSkills.length; index++) {
+      if (importantSkills[index] == oldName) importantSkills[index] = nextName;
+    }
+    for (var index = 0; index < purpleSkills.length; index++) {
+      if (purpleSkills[index] == oldName) purpleSkills[index] = nextName;
+    }
+    _save();
+    notifyListeners();
+  }
+
+  void removeSkillFromBoss(Boss boss, Skill skill) {
+    boss.skills.removeWhere((item) => item.id == skill.id);
+    for (final character in characters) {
+      character.levels.remove(skill.id);
+    }
+    if (!bosses
+        .expand((item) => item.skills)
+        .any((other) => other.name == skill.name && other.tradable)) {
+      purpleSkills.remove(skill.name);
+    }
+    _save();
+    notifyListeners();
+  }
+
+  Future<bool> exportBackup() async {
+    final bytes = Uint8List.fromList(utf8.encode(jsonEncode(_json())));
+    final path = await FilePicker.saveFile(
+        dialogTitle: '导出百战技能备份',
+        fileName: 'baizhan-skill-backup.json',
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+        bytes: bytes);
+    return path != null;
+  }
+
+  Future<bool> importBackup() async {
+    final result = await FilePicker.pickFiles(
+        type: FileType.custom, allowedExtensions: ['json'], withData: true);
+    final bytes = result?.files.single.bytes;
+    if (bytes == null) return false;
+    final data = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    characters.clear();
+    bosses.clear();
+    importantSkills.clear();
+    purpleSkills.clear();
+    _restore(data);
+    if (selectedCharacterId.isEmpty && characters.isNotEmpty) {
+      selectedCharacterId = characters.first.id;
+    }
+    _save();
+    notifyListeners();
+    return true;
+  }
+
+  Future<bool> exportBosses() async {
+    final data = {
+      'type': 'baizhan-bosses',
+      'version': 1,
+      'bosses': bosses.map((boss) => boss.toJson()).toList()
+    };
+    final bytes = Uint8List.fromList(utf8.encode(jsonEncode(data)));
+    final path = await FilePicker.saveFile(
+        dialogTitle: '导出全部 Boss 和技能',
+        fileName: 'baizhan-bosses.json',
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+        bytes: bytes);
+    return path != null;
+  }
+
+  Future<BossImportResult?> importBosses() async {
+    final result = await FilePicker.pickFiles(
+        type: FileType.custom, allowedExtensions: ['json'], withData: true);
+    final bytes = result?.files.single.bytes;
+    if (bytes == null) return null;
+    final data = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    final rawBosses = data['bosses'];
+    if (rawBosses is! List) {
+      throw const FormatException('文件中没有 Boss 数据');
+    }
+
+    var bossesAdded = 0;
+    var skillsAdded = 0;
+    final importStamp = DateTime.now().microsecondsSinceEpoch;
+    for (var bossIndex = 0; bossIndex < rawBosses.length; bossIndex++) {
+      final imported =
+          Boss.fromJson(Map<String, dynamic>.from(rawBosses[bossIndex] as Map));
+      final normalizedBossName = imported.name.trim().toLowerCase();
+      if (normalizedBossName.isEmpty) continue;
+      Boss? target;
+      for (final boss in bosses) {
+        if (boss.name.trim().toLowerCase() == normalizedBossName) {
+          target = boss;
+          break;
+        }
+      }
+
+      if (target == null) {
+        final bossId = 'boss-import-$importStamp-$bossIndex';
+        final seenNames = <String>{};
+        final newSkills = <Skill>[];
+        for (final importedSkill in imported.skills) {
+          final normalizedSkillName = importedSkill.name.trim().toLowerCase();
+          if (normalizedSkillName.isEmpty ||
+              !seenNames.add(normalizedSkillName)) continue;
+          final skill = Skill(
+              id: '$bossId-skill-${newSkills.length}',
+              name: importedSkill.name.trim(),
+              tradable: importedSkill.tradable);
+          newSkills.add(skill);
+          if (skill.tradable && !purpleSkills.contains(skill.name)) {
+            purpleSkills.add(skill.name);
+          }
+        }
+        final newBoss = Boss(
+            id: bossId,
+            name: imported.name.trim(),
+            type: imported.type,
+            spirit: imported.spirit,
+            stamina: imported.stamina,
+            skills: newSkills);
+        bosses.add(newBoss);
+        for (final character in characters) {
+          for (final skill in newSkills) {
+            character.levels[skill.id] = 1;
+          }
+        }
+        bossesAdded++;
+        skillsAdded += newSkills.length;
+        continue;
+      }
+
+      final existingNames =
+          target.skills.map((skill) => skill.name.trim().toLowerCase()).toSet();
+      for (var skillIndex = 0;
+          skillIndex < imported.skills.length;
+          skillIndex++) {
+        final importedSkill = imported.skills[skillIndex];
+        final normalizedSkillName = importedSkill.name.trim().toLowerCase();
+        if (normalizedSkillName.isEmpty ||
+            !existingNames.add(normalizedSkillName)) continue;
+        final skill = Skill(
+            id: '${target.id}-skill-import-$importStamp-$skillIndex',
+            name: importedSkill.name.trim(),
+            tradable: importedSkill.tradable);
+        target.skills.add(skill);
+        for (final character in characters) {
+          character.levels[skill.id] = 1;
+        }
+        if (skill.tradable && !purpleSkills.contains(skill.name)) {
+          purpleSkills.add(skill.name);
+        }
+        skillsAdded++;
+      }
+    }
+
+    if (bossesAdded > 0 || skillsAdded > 0) {
+      _save();
+      notifyListeners();
+    }
+    return BossImportResult(bossesAdded: bossesAdded, skillsAdded: skillsAdded);
+  }
+
+  void addCharacter(
+      {required String name,
+      required String gender,
+      required String school,
+      required String mind,
+      required String position,
+      int initialSkillLevel = 1,
+      Map<String, int> skillLevelsByName = const {}}) {
+    final character = CharacterData(
+        id: 'character-${DateTime.now().microsecondsSinceEpoch}',
+        name: name.trim(),
+        gender: gender,
+        school: school,
+        mind: mind,
+        position: position,
+        levels: {});
+    for (final boss in bosses)
+      for (final skill in boss.skills) {
+        character.levels[skill.id] =
+            (skillLevelsByName[skillNameForGender(skill, gender)] ??
+                    skillLevelsByName[skill.name] ??
+                    initialSkillLevel)
+                .clamp(1, 10)
+                .toInt();
+      }
+    characters.add(character);
+    selectedCharacterId = character.id;
+    _save();
+    notifyListeners();
+  }
+
+  int importCharacterExcel(CharacterExcelData data) {
+    var character = characters
+        .where((item) => item.name.trim() == data.name.trim())
+        .firstOrNull;
+    character ??= CharacterData(
+        id: 'character-${DateTime.now().microsecondsSinceEpoch}',
+        name: data.name.trim(),
+        gender: data.gender,
+        school: '未设置',
+        mind: '未设置',
+        position: 'dps',
+        levels: {});
+    character.name = data.name.trim();
+    character.gender = data.gender;
+    character.archived = false;
+    var matched = 0;
+    for (final boss in bosses) {
+      for (final skill in boss.skills) {
+        final importedLevel =
+            data.skillLevels[skillNameForGender(skill, data.gender)] ??
+                data.skillLevels[skill.name];
+        character.levels[skill.id] = importedLevel ?? 1;
+        if (importedLevel != null) matched++;
+      }
+    }
+    if (!characters.contains(character)) characters.add(character);
+    selectedCharacterId = character.id;
+    _save();
+    notifyListeners();
+    return matched;
+  }
+
+  void updateCharacter(CharacterData character,
+      {required String name,
+      required String gender,
+      required String school,
+      required String mind,
+      required String position}) {
+    character.name = name.trim();
+    character.gender = gender;
+    character.school = school;
+    character.mind = mind;
+    character.position = position;
+    _save();
+    notifyListeners();
+  }
+
+  void setSkillTradable(Skill skill, bool tradable) {
+    skill.tradable = tradable;
+    if (tradable) {
+      if (!purpleSkills.contains(skill.name)) purpleSkills.add(skill.name);
+    } else {
+      final stillTradable = bosses
+          .expand((boss) => boss.skills)
+          .any((item) => item.name == skill.name && item.tradable);
+      if (!stillTradable) purpleSkills.remove(skill.name);
+    }
+    _save();
+    notifyListeners();
+  }
+
+  void removeCharacter(CharacterData character) {
+    if (characters.length <= 1) return;
+    characters.removeWhere((item) => item.id == character.id);
+    if (selectedCharacterId == character.id) {
+      selectedCharacterId = activeCharacters.first.id;
+    }
+    _save();
+    notifyListeners();
+  }
+}
+
+class SkillInputData {
+  SkillInputData({required this.name, this.tradable = false});
+  final String name;
+  final bool tradable;
+}
+
+class SkillDraftController {
+  SkillDraftController([String value = ''])
+      : controller = TextEditingController(text: value);
+  final TextEditingController controller;
+  bool tradable = false;
+
+  void dispose() => controller.dispose();
+}
+
+class BattleSkillsApp extends StatelessWidget {
+  const BattleSkillsApp({required this.store, super.key});
+  final SkillStore store;
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+      animation: store,
+      builder: (context, child) => MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: '百战异闻录 · 技能统计',
+          themeMode: store.themeMode,
+          theme: ThemeData(
+              useMaterial3: true,
+              scaffoldBackgroundColor: canvas,
+              colorScheme:
+                  ColorScheme.fromSeed(seedColor: teal, brightness: Brightness.light)
+                      .copyWith(
+                          primary: teal,
+                          onPrimary: Colors.white,
+                          primaryContainer: const Color(0xffe1f1ea),
+                          onPrimaryContainer: const Color(0xff245f4c),
+                          secondary: const Color(0xff69a991),
+                          secondaryContainer: const Color(0xffe8f3ee),
+                          tertiary: const Color(0xff8bb7a5),
+                          outline: const Color(0xffc5d5ce),
+                          outlineVariant: line,
+                          surface: Colors.white),
+              fontFamily: 'Arial',
+              textTheme: const TextTheme(
+                  headlineSmall: TextStyle(
+                      fontSize: 23,
+                      fontWeight: FontWeight.w700,
+                      color: ink,
+                      height: 1.2),
+                  titleLarge: TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.w700, color: ink),
+                  titleMedium: TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w600, color: ink),
+                  bodyLarge: TextStyle(fontSize: 14, color: ink),
+                  bodyMedium: TextStyle(fontSize: 13, color: ink),
+                  labelLarge: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              inputDecorationTheme: InputDecorationTheme(filled: true, fillColor: const Color(0xfff7f9f8), isDense: true, labelStyle: const TextStyle(color: muted, fontSize: 12, fontWeight: FontWeight.w400), floatingLabelStyle: const TextStyle(color: teal, fontSize: 12, fontWeight: FontWeight.w400), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: line)), enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: line)), focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: teal, width: 1.2)), contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11)),
+              visualDensity: VisualDensity.compact,
+              dividerTheme: const DividerThemeData(color: line, space: 1, thickness: 1),
+              appBarTheme: const AppBarTheme(centerTitle: false, titleSpacing: 24, backgroundColor: Colors.white, surfaceTintColor: Colors.transparent),
+              navigationBarTheme: const NavigationBarThemeData(height: 62, labelTextStyle: WidgetStatePropertyAll(TextStyle(fontSize: 11, fontWeight: FontWeight.w600)), indicatorColor: Color(0xffe5f3ed)),
+              chipTheme: ChipThemeData(backgroundColor: const Color(0xfff7f9f8), side: const BorderSide(color: line), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: ink)),
+              popupMenuTheme: PopupMenuThemeData(color: const Color(0xf2f7fbf9), elevation: 0, shadowColor: Colors.transparent, surfaceTintColor: Colors.transparent, textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w400, color: ink), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: const BorderSide(color: line))),
+              dialogTheme: DialogThemeData(backgroundColor: const Color(0xf2f7fbf9), elevation: 0, surfaceTintColor: Colors.transparent, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: const BorderSide(color: line)), titleTextStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: ink), contentTextStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w400, color: ink)),
+              cardColor: Colors.white),
+          darkTheme: ThemeData(useMaterial3: true, brightness: Brightness.dark, scaffoldBackgroundColor: const Color(0xff121816), colorScheme: ColorScheme.fromSeed(seedColor: teal, brightness: Brightness.dark).copyWith(primary: const Color(0xff76c7a7)), fontFamily: 'Arial', visualDensity: VisualDensity.compact, inputDecorationTheme: InputDecorationTheme(filled: true, fillColor: const Color(0xff1c2521), isDense: true, border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11)), popupMenuTheme: const PopupMenuThemeData(elevation: 0, shadowColor: Colors.transparent, surfaceTintColor: Colors.transparent), navigationBarTheme: const NavigationBarThemeData(height: 62)),
+          home: Shell(store: store)));
+}
+
+class Shell extends StatelessWidget {
+  const Shell({required this.store, super.key});
+  final SkillStore store;
+  static const pageTitles = ['首页', '重要技能汇总', '紫色技能汇总', '所有技能汇总', '设置'];
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+        builder: (context, constraints) {
+          final wide = constraints.maxWidth >= 800;
+          final content = Column(children: [Expanded(child: _page(context))]);
+          return Scaffold(
+            body: SafeArea(
+                child: wide
+                    ? Row(children: [
+                        SideNav(store: store),
+                        Expanded(child: content)
+                      ])
+                    : content),
+            bottomNavigationBar: wide
+                ? null
+                : NavigationBar(
+                    labelBehavior:
+                        NavigationDestinationLabelBehavior.onlyShowSelected,
+                    selectedIndex: store.page.clamp(0, 4),
+                    onDestinationSelected: store.setPage,
+                    destinations: const [
+                      NavigationDestination(
+                          icon: Icon(Icons.dashboard_outlined),
+                          selectedIcon: Icon(Icons.dashboard),
+                          label: '首页'),
+                      NavigationDestination(
+                          icon: Icon(Icons.star_border),
+                          selectedIcon: Icon(Icons.star),
+                          label: '重要'),
+                      NavigationDestination(
+                          icon: Icon(Icons.auto_awesome_outlined),
+                          selectedIcon: Icon(Icons.auto_awesome),
+                          label: '紫书'),
+                      NavigationDestination(
+                          icon: Icon(Icons.account_tree_outlined),
+                          selectedIcon: Icon(Icons.account_tree),
+                          label: '所有技能'),
+                      NavigationDestination(
+                          icon: Icon(Icons.settings_outlined),
+                          selectedIcon: Icon(Icons.settings),
+                          label: '设置'),
+                    ],
+                  ),
+          );
+        },
+      );
+  Widget _page(BuildContext context) => switch (store.page) {
+        1 => ImportantPage(store: store),
+        2 => PurplePage(store: store),
+        3 => AllSkillsPage(store: store),
+        4 => SettingsPage(store: store),
+        5 => CharacterManagementPage(store: store),
+        6 => BossPage(store: store),
+        7 => SyncBackupPage(store: store),
+        _ => HomePage(store: store)
+      };
+}
+
+class SideNav extends StatelessWidget {
+  const SideNav({required this.store, super.key});
+  final SkillStore store;
+  @override
+  Widget build(BuildContext context) => Container(
+      width: 190,
+      decoration: const BoxDecoration(
+          color: Colors.white, border: Border(right: BorderSide(color: line))),
+      padding: const EdgeInsets.fromLTRB(16, 22, 12, 16),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Padding(
+            padding: EdgeInsets.only(left: 10, bottom: 26),
+            child: Row(children: [
+              Icon(Icons.auto_awesome, color: teal),
+              SizedBox(width: 10),
+              Text('百战异闻录',
+                  style: TextStyle(
+                      color: ink, fontSize: 18, fontWeight: FontWeight.w700))
+            ])),
+        ...[
+          ('首页', Icons.dashboard_outlined),
+          ('重要技能', Icons.star_border),
+          ('紫书统计', Icons.auto_awesome_outlined),
+          ('所有技能', Icons.account_tree_outlined),
+          ('设置', Icons.settings_outlined)
+        ].asMap().entries.map((entry) => NavItem(
+            label: entry.value.$1,
+            icon: entry.value.$2,
+            selected:
+                store.page == entry.key || (entry.key == 4 && store.page >= 4),
+            onTap: () => store.setPage(entry.key))),
+        const Spacer(),
+        Text(
+            '${store.activeCharacters.length} 个角色 · ${store.bosses.length} 个 Boss',
+            style: const TextStyle(color: muted, fontSize: 12)),
+        const SizedBox(height: 6),
+        const Text('数据自动保存在本机', style: TextStyle(color: muted, fontSize: 11))
+      ]));
+}
+
+class NavItem extends StatelessWidget {
+  const NavItem(
+      {required this.label,
+      required this.icon,
+      required this.selected,
+      required this.onTap,
+      super.key});
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) => Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
+              decoration: BoxDecoration(
+                  color:
+                      selected ? const Color(0xffe1f1ea) : Colors.transparent,
+                  borderRadius: BorderRadius.circular(6)),
+              child: Row(children: [
+                Icon(icon, size: 19, color: selected ? teal : muted),
+                const SizedBox(width: 12),
+                Text(label,
+                    style: TextStyle(
+                        color: selected ? teal : ink,
+                        fontWeight:
+                            selected ? FontWeight.w600 : FontWeight.w400))
+              ]))));
+}
+
+class TopBar extends StatelessWidget {
+  const TopBar({required this.store, super.key});
+  final SkillStore store;
+  @override
+  Widget build(BuildContext context) => Container(
+      padding: const EdgeInsets.fromLTRB(28, 22, 28, 18),
+      decoration: const BoxDecoration(
+          color: Colors.white, border: Border(bottom: BorderSide(color: line))),
+      child: LayoutBuilder(builder: (context, constraints) {
+        final compact = constraints.maxWidth < 640;
+        final title =
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(Shell.pageTitles[store.page],
+              style: const TextStyle(
+                  fontSize: 23, fontWeight: FontWeight.w700, color: ink)),
+          const SizedBox(height: 4),
+          Text(
+              store.page == 0
+                  ? '按角色查看精耐、技能重数和通本需求'
+                  : '基于 season4 v4.1 初始数据，可继续维护',
+              style: const TextStyle(color: muted, fontSize: 12))
+        ]);
+        final actions = Row(mainAxisSize: MainAxisSize.min, children: [
+          CharacterPicker(store: store),
+          const SizedBox(width: 6),
+          IconButton(
+              tooltip: '新增角色',
+              onPressed: () => showCharacterDialog(context, store),
+              icon: const Icon(Icons.person_add_alt_1, color: teal))
+        ]);
+        return compact
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [title, const SizedBox(height: 14), actions])
+            : Row(children: [Expanded(child: title), actions]);
+      }));
+}
+
+class CharacterPicker extends StatelessWidget {
+  const CharacterPicker({required this.store, super.key});
+  final SkillStore store;
+  @override
+  Widget build(BuildContext context) => PopupMenuButton<String>(
+      initialValue: store.selectedCharacterId,
+      onSelected: store.selectCharacter,
+      itemBuilder: (context) => store.activeCharacters
+          .map((character) =>
+              PopupMenuItem(value: character.id, child: Text(character.name)))
+          .toList(),
+      child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
+          decoration: BoxDecoration(
+              color: const Color(0xfff7f9f8),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: line)),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            CircleAvatar(
+                radius: 13,
+                backgroundColor: teal.withOpacity(.14),
+                child: Text(
+                    store.selectedCharacter == null ||
+                            store.selectedCharacter!.name.isEmpty
+                        ? '角'
+                        : store.selectedCharacter!.name.substring(0, 1),
+                    style: const TextStyle(fontSize: 12, color: teal))),
+            const SizedBox(width: 8),
+            Text(store.selectedCharacter?.name ?? '选择角色',
+                style:
+                    const TextStyle(fontWeight: FontWeight.w600, color: ink)),
+            const SizedBox(width: 4),
+            const Icon(Icons.keyboard_arrow_down, size: 18, color: muted)
+          ])));
+}
+
+class PageBody extends StatelessWidget {
+  const PageBody({required this.child, super.key, this.title, this.action});
+  final Widget child;
+  final String? title;
+  final Widget? action;
+  @override
+  Widget build(BuildContext context) => SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(28, 24, 28, 34),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (title != null)
+          Row(children: [
+            Text(title!,
+                style: const TextStyle(
+                    fontSize: 17, fontWeight: FontWeight.w800, color: ink)),
+            const Spacer(),
+            if (action != null) action!
+          ]),
+        if (title != null) const SizedBox(height: 14),
+        child
+      ]));
+}
+
+double _filterItemWidth(double maxWidth, int itemCount) {
+  final columns = maxWidth >= 900
+      ? itemCount
+      : maxWidth >= 640
+          ? math.min(itemCount, 3)
+          : maxWidth >= 360
+              ? math.min(itemCount, 2)
+              : 1;
+  final width = (maxWidth - (columns - 1) * 10) / columns;
+  return math.min(width, 280.0);
+}
+
+Widget _fourCardRow(List<Widget> cards, double maxWidth) {
+  return SizedBox(
+      width: maxWidth,
+      child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: cards.asMap().entries.map((entry) {
+            final last = entry.key == cards.length - 1;
+            return Expanded(
+                child: Padding(
+                    padding: EdgeInsets.only(right: last ? 0 : 12),
+                    child: entry.value));
+          }).toList()));
+}
+
+class _FilterDropdown<T> extends StatefulWidget {
+  const _FilterDropdown(
+      {required this.value,
+      required this.values,
+      required this.itemLabel,
+      required this.width,
+      required this.onChanged,
+      this.compactLabel});
+  final T value;
+  final List<T> values;
+  final String Function(T value) itemLabel;
+  final String Function(T value)? compactLabel;
+  final double width;
+  final ValueChanged<T?> onChanged;
+
+  @override
+  State<_FilterDropdown<T>> createState() => _FilterDropdownState<T>();
+}
+
+class _FilterDropdownState<T> extends State<_FilterDropdown<T>> {
+  final _layerLink = LayerLink();
+  final _menuController = OverlayPortalController();
+  double _menuHeight = 0;
+
+  void _closeMenu() {
+    if (_menuController.isShowing) _menuController.hide();
+  }
+
+  double _spaceBelow() {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box == null) return 0;
+    final bottom = box.localToGlobal(Offset(0, box.size.height)).dy;
+    return MediaQuery.sizeOf(context).height -
+        MediaQuery.viewPaddingOf(context).bottom -
+        bottom -
+        14;
+  }
+
+  Future<void> _toggleMenu() async {
+    if (_menuController.isShowing) {
+      _closeMenu();
+      return;
+    }
+    if (_spaceBelow() < 120) {
+      await Scrollable.ensureVisible(context,
+          alignment: 0.15,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut);
+      if (!mounted) return;
+    }
+    _menuHeight = math.min(math.min(widget.values.length * 44.0 + 12, 300.0),
+        math.max(0.0, _spaceBelow()));
+    if (_menuHeight < 1) return;
+    _menuController.show();
+  }
+
+  Widget _buildMenu(BuildContext context) {
+    final menuWidth = math.min(widget.width * 0.82, 224.0);
+    return Stack(children: [
+      Positioned.fill(
+          child: GestureDetector(
+              behavior: HitTestBehavior.opaque, onTap: _closeMenu)),
+      CompositedTransformFollower(
+          link: _layerLink,
+          showWhenUnlinked: false,
+          offset: Offset((widget.width - menuWidth) / 2, 49),
+          child: SizedBox(
+              width: menuWidth,
+              height: _menuHeight,
+              child: Material(
+                  color: const Color(0xfff9fdfb),
+                  elevation: 0,
+                  shadowColor: Colors.transparent,
+                  surfaceTintColor: Colors.transparent,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      side: const BorderSide(color: Color(0xffd5e8df))),
+                  clipBehavior: Clip.antiAlias,
+                  child: ListView.builder(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      itemCount: widget.values.length,
+                      itemBuilder: (context, index) {
+                        final item = widget.values[index];
+                        return InkWell(
+                            onTap: () {
+                              _closeMenu();
+                              widget.onChanged(item);
+                            },
+                            child: SizedBox(
+                                height: 44,
+                                child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12),
+                                    child: Row(children: [
+                                      SizedBox(
+                                          width: 18,
+                                          child: item == widget.value
+                                              ? const Icon(Icons.check,
+                                                  size: 15, color: teal)
+                                              : null),
+                                      const SizedBox(width: 5),
+                                      Expanded(
+                                          child: Text(widget.itemLabel(item),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                  color: ink, fontSize: 12)))
+                                    ]))));
+                      }))))
+    ]);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 600;
+    final selectedLabel = compact && widget.compactLabel != null
+        ? widget.compactLabel!(widget.value)
+        : widget.itemLabel(widget.value);
+    return OverlayPortal(
+        controller: _menuController,
+        overlayChildBuilder: _buildMenu,
+        child: CompositedTransformTarget(
+            link: _layerLink,
+            child: SizedBox(
+                width: widget.width,
+                height: 42,
+                child: InkWell(
+                    onTap: _toggleMenu,
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 11),
+                        decoration: BoxDecoration(
+                            color: const Color(0xfff9fdfb),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xffd5e8df))),
+                        child: Row(children: [
+                          Expanded(
+                              child: Text(selectedLabel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      color: ink,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500))),
+                          const SizedBox(width: 5),
+                          const Icon(Icons.keyboard_arrow_down,
+                              size: 17, color: muted)
+                        ]))))));
+  }
+}
+
+class _LabeledFilterDropdown<T> extends StatelessWidget {
+  const _LabeledFilterDropdown(
+      {required this.label,
+      required this.value,
+      required this.values,
+      required this.itemLabel,
+      required this.width,
+      required this.onChanged});
+
+  final String label;
+  final T value;
+  final List<T> values;
+  final String Function(T value) itemLabel;
+  final double width;
+  final ValueChanged<T?> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label, style: const TextStyle(color: muted, fontSize: 12)),
+            const SizedBox(height: 5),
+            _FilterDropdown<T>(
+                value: value,
+                values: values,
+                itemLabel: itemLabel,
+                width: width,
+                onChanged: onChanged)
+          ]);
+}
+
+class _NameAutocomplete extends StatefulWidget {
+  const _NameAutocomplete(
+      {required this.controller,
+      required this.names,
+      required this.width,
+      required this.hint,
+      required this.compactHint});
+  final TextEditingController controller;
+  final List<String> names;
+  final double width;
+  final String hint;
+  final String compactHint;
+
+  @override
+  State<_NameAutocomplete> createState() => _NameAutocompleteState();
+}
+
+class _NameAutocompleteState extends State<_NameAutocomplete> {
+  final focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_refresh);
+  }
+
+  @override
+  void didUpdateWidget(covariant _NameAutocomplete oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_refresh);
+      widget.controller.addListener(_refresh);
+    }
+  }
+
+  void _refresh() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_refresh);
+    focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 600;
+    return SizedBox(
+        width: widget.width,
+        height: 42,
+        child: RawAutocomplete<String>(
+            textEditingController: widget.controller,
+            focusNode: focusNode,
+            optionsViewOpenDirection: OptionsViewOpenDirection.down,
+            displayStringForOption: (option) => option,
+            optionsBuilder: (value) {
+              final query = value.text.trim().toLowerCase();
+              return widget.names
+                  .where((name) =>
+                      query.isEmpty || name.toLowerCase().contains(query))
+                  .toSet();
+            },
+            optionsViewBuilder: (context, onSelected, options) {
+              final values = options.toList();
+              final menuWidth = math.min(widget.width * 0.82, 224.0);
+              return Align(
+                  alignment: Alignment.topCenter,
+                  child: SizedBox(
+                      width: menuWidth,
+                      child: Material(
+                          color: const Color(0xfff9fdfb),
+                          elevation: 0,
+                          shadowColor: Colors.transparent,
+                          surfaceTintColor: Colors.transparent,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              side: const BorderSide(color: Color(0xffd5e8df))),
+                          child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxHeight: 280),
+                              child: ListView.builder(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 6),
+                                  shrinkWrap: true,
+                                  itemCount: values.length,
+                                  itemBuilder: (context, index) => InkWell(
+                                      onTap: () => onSelected(values[index]),
+                                      child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 13, vertical: 10),
+                                          child: Text(values[index],
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                  color: ink,
+                                                  fontSize: 13)))))))));
+            },
+            fieldViewBuilder: (context, textController, focusNode,
+                    onFieldSubmitted) =>
+                TextField(
+                    controller: textController,
+                    focusNode: focusNode,
+                    style: const TextStyle(
+                        color: ink, fontSize: 12, fontWeight: FontWeight.w500),
+                    onSubmitted: (_) => onFieldSubmitted(),
+                    decoration: InputDecoration(
+                        isDense: true,
+                        contentPadding:
+                            const EdgeInsets.symmetric(horizontal: 10),
+                        prefixIcon: const Icon(Icons.search, size: 17),
+                        prefixIconConstraints:
+                            const BoxConstraints(minWidth: 34),
+                        hintText: compact ? widget.compactHint : widget.hint,
+                        hintStyle: const TextStyle(color: muted, fontSize: 12),
+                        suffixIcon: textController.text.isEmpty
+                            ? IconButton(
+                                tooltip: '展开技能列表',
+                                padding: EdgeInsets.zero,
+                                icon: const Icon(Icons.keyboard_arrow_down,
+                                    size: 17),
+                                onPressed: focusNode.requestFocus)
+                            : IconButton(
+                                tooltip: '清除',
+                                padding: EdgeInsets.zero,
+                                icon: const Icon(Icons.close, size: 15),
+                                onPressed: textController.clear),
+                        suffixIconConstraints:
+                            const BoxConstraints(minWidth: 34)))));
+  }
+}
+
+class CharacterFilterPanel extends StatefulWidget {
+  const CharacterFilterPanel({required this.store, super.key});
+  final SkillStore store;
+
+  @override
+  State<CharacterFilterPanel> createState() => _CharacterFilterPanelState();
+}
+
+class _CharacterFilterPanelState extends State<CharacterFilterPanel> {
+  final query = TextEditingController();
+  String gender = '全部';
+  String school = '全部';
+
+  @override
+  void dispose() {
+    query.dispose();
+    super.dispose();
+  }
+
+  List<CharacterData> get matches =>
+      widget.store.activeCharacters.where((character) {
+        final text = query.text.trim().toLowerCase();
+        return (text.isEmpty || character.name.toLowerCase().contains(text)) &&
+            (gender == '全部' || character.gender == gender) &&
+            (school == '全部' || character.school == school);
+      }).toList();
+
+  @override
+  Widget build(BuildContext context) => CardShell(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.manage_search, color: teal),
+          const SizedBox(width: 9),
+          const Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text('角色筛选',
+                    style: TextStyle(
+                        color: ink, fontSize: 16, fontWeight: FontWeight.w800)),
+                SizedBox(height: 3),
+                Text('按角色名、性别和门派快速找到要查看的角色',
+                    style: TextStyle(color: muted, fontSize: 12))
+              ])),
+          Text('${matches.length} 个匹配',
+              style: const TextStyle(color: teal, fontWeight: FontWeight.w800))
+        ]),
+        const SizedBox(height: 15),
+        LayoutBuilder(builder: (context, constraints) {
+          final width = _filterItemWidth(constraints.maxWidth, 3);
+          return Wrap(spacing: 10, runSpacing: 10, children: [
+            SizedBox(
+                width: width,
+                height: 42,
+                child: TextField(
+                    controller: query,
+                    onChanged: (_) => setState(() {}),
+                    decoration: const InputDecoration(
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 10),
+                        prefixIcon: Icon(Icons.search, size: 17),
+                        prefixIconConstraints: BoxConstraints(minWidth: 34),
+                        hintText: '角色名称',
+                        hintStyle: TextStyle(color: muted, fontSize: 12)))),
+            _filterSelect('性别', gender, ['全部', '女性', '男性'], (value) {
+              setState(() => gender = value!);
+            }, width),
+            _filterSelect('门派', school, ['全部', ...schoolOptions], (value) {
+              setState(() => school = value!);
+            }, width)
+          ]);
+        }),
+        const SizedBox(height: 15),
+        if (matches.isEmpty)
+          const Text('没有符合条件的角色', style: TextStyle(color: muted, fontSize: 12))
+        else
+          Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: matches
+                  .map((character) => _CharacterResultTile(
+                      character: character,
+                      selected:
+                          character.id == widget.store.selectedCharacterId,
+                      onTap: () => widget.store.selectCharacter(character.id)))
+                  .toList())
+      ]));
+
+  Widget _filterSelect(String label, String value, List<String> values,
+          ValueChanged<String?> onChanged, double width) =>
+      _FilterDropdown<String>(
+          value: value,
+          values: values,
+          itemLabel: (item) => item,
+          width: width,
+          onChanged: onChanged);
+}
+
+class _CharacterResultTile extends StatelessWidget {
+  const _CharacterResultTile(
+      {required this.character, required this.selected, required this.onTap});
+  final CharacterData character;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(11),
+      child: Container(
+          constraints: const BoxConstraints(minWidth: 180, maxWidth: 270),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+              color:
+                  selected ? const Color(0xffe1f1ea) : const Color(0xfff7f9f8),
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(color: selected ? teal : line)),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            CircleAvatar(
+                radius: 17,
+                backgroundColor: selected ? teal.withOpacity(.14) : line,
+                child: Text(
+                    character.name.isEmpty
+                        ? '角'
+                        : character.name.substring(0, 1),
+                    style: const TextStyle(
+                        color: teal, fontWeight: FontWeight.w800))),
+            const SizedBox(width: 9),
+            Flexible(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(character.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: ink, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 3),
+                  Text(
+                      '${character.gender} · ${character.school} · ${character.position}',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: muted, fontSize: 11)),
+                  Text(character.mind,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: muted, fontSize: 11))
+                ]))
+          ])));
+}
+
+class HomePage extends StatefulWidget {
+  const HomePage({required this.store, super.key});
+  final SkillStore store;
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  bool showExistingSkills = false;
+  bool syncing = false;
+
+  SkillStore get store => widget.store;
+
+  @override
+  Widget build(BuildContext context) {
+    final character = store.selectedCharacter;
+    return PageBody(
+        title: '首页',
+        action: Text(
+            '${store.activeCharacters.length} 个角色 · ${store.bosses.length} 个 Boss',
+            style: const TextStyle(color: teal, fontWeight: FontWeight.w600)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _syncStatusBar(context),
+          const SizedBox(height: 14),
+          CharacterSwitcher(store: store),
+          const SizedBox(height: 14),
+          CardShell(
+              child: Row(children: [
+            const Icon(Icons.auto_awesome, color: teal, size: 28),
+            const SizedBox(width: 12),
+            Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  const Text('百战异闻录技能统计',
+                      style: TextStyle(
+                          color: ink,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  Text(
+                      character == null
+                          ? '请先添加一个角色'
+                          : '当前查看：${character.name} · ${character.school} · ${character.mind}',
+                      style: const TextStyle(color: muted, fontSize: 12))
+                ])),
+            OutlinedButton.icon(
+                onPressed: () => store.setPage(3),
+                icon: const Icon(Icons.groups_outlined, size: 17),
+                label: const Text('进入所有技能'))
+          ])),
+          const SizedBox(height: 18),
+          if (character != null) ...[
+            LayoutBuilder(builder: (context, constraints) {
+              final cards = [
+                MetricCard(
+                    width: double.infinity,
+                    height: 120,
+                    label: '精神值',
+                    value: formatNumber(store.stat(character.id, true)),
+                    accent: teal,
+                    icon: Icons.bolt),
+                MetricCard(
+                    width: double.infinity,
+                    height: 120,
+                    label: '耐力值',
+                    value: formatNumber(store.stat(character.id, false)),
+                    accent: const Color(0xff69a991),
+                    icon: Icons.shield_outlined),
+                MetricCard(
+                    width: double.infinity,
+                    height: 120,
+                    label: '现有技能数量',
+                    value:
+                        '${character.levels.values.where((value) => value > 0).length}',
+                    accent: purple,
+                    icon: Icons.menu_book_outlined,
+                    onTap: () => setState(
+                        () => showExistingSkills = !showExistingSkills)),
+                HomeBookNeeds(store: store, character: character, height: 120)
+              ];
+              return _fourCardRow(cards, constraints.maxWidth);
+            }),
+            const SizedBox(height: 14),
+            if (showExistingSkills)
+              ExistingSkillsPanel(store: store, character: character),
+            const SizedBox(height: 2),
+          ]
+        ]));
+  }
+
+  Widget _syncStatusBar(BuildContext context) => CardShell(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(children: [
+        const Icon(Icons.cloud_sync_outlined, color: teal, size: 22),
+        const SizedBox(width: 10),
+        const Text('同步状态',
+            style: TextStyle(color: muted, fontWeight: FontWeight.w600)),
+        const SizedBox(width: 10),
+        Expanded(
+            child: Text(
+                store.lastSyncAt == null
+                    ? (store.syncConfig?.isValid == true
+                        ? '尚未同步'
+                        : '未配置 WebDAV')
+                    : '上次成功 ${store.lastSyncAt!.toLocal().toString().substring(0, 16)}',
+                style: const TextStyle(color: ink, fontSize: 12))),
+        IconButton(
+            tooltip: '立即同步',
+            onPressed: syncing
+                ? null
+                : () async {
+                    setState(() => syncing = true);
+                    await store.syncNow();
+                    if (mounted) setState(() => syncing = false);
+                  },
+            icon: syncing
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.sync, color: teal)),
+        IconButton(
+            tooltip: '同步设置',
+            onPressed: () => store.setPage(4),
+            icon: const Icon(Icons.settings_outlined, color: muted))
+      ]));
+}
+
+class ExistingSkillsPanel extends StatefulWidget {
+  const ExistingSkillsPanel(
+      {required this.store, required this.character, super.key});
+  final SkillStore store;
+  final CharacterData character;
+
+  @override
+  State<ExistingSkillsPanel> createState() => _ExistingSkillsPanelState();
+}
+
+class _ExistingSkillsPanelState extends State<ExistingSkillsPanel> {
+  final bossQuery = TextEditingController();
+  int maxRank = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    bossQuery.addListener(_onBossQueryChanged);
+  }
+
+  void _onBossQueryChanged() => setState(() {});
+
+  @override
+  void dispose() {
+    bossQuery.removeListener(_onBossQueryChanged);
+    bossQuery.dispose();
+    super.dispose();
+  }
+
+  SkillStore get store => widget.store;
+  CharacterData get character => widget.character;
+
+  bool _matches(Skill skill) {
+    if (!skillAppliesToGender(skill, character.gender)) return false;
+    final level = store.level(character.id, skill.id);
+    return maxRank == 0 ? level > 0 : level > 0 && level <= maxRank;
+  }
+
+  List<Boss> get visibleBosses {
+    final query = bossQuery.text.trim().toLowerCase();
+    return store.bosses
+        .where((boss) =>
+            (query.isEmpty || boss.name.toLowerCase().contains(query)) &&
+            boss.skills.any(_matches))
+        .toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bosses = visibleBosses;
+    final filteredSkillCount = bosses.fold<int>(
+        0, (count, boss) => count + boss.skills.where(_matches).length);
+    return CardShell(
+        padding: const EdgeInsets.all(14),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Text('现有技能',
+                style: TextStyle(
+                    color: ink, fontSize: 15, fontWeight: FontWeight.w800)),
+            const Spacer(),
+            Text('$filteredSkillCount 个技能',
+                style: const TextStyle(color: teal, fontSize: 12)),
+          ]),
+          const SizedBox(height: 10),
+          LayoutBuilder(builder: (context, constraints) {
+            final width = _filterItemWidth(constraints.maxWidth, 2);
+            return Wrap(spacing: 10, runSpacing: 10, children: [
+              _NameAutocomplete(
+                  controller: bossQuery,
+                  names: store.bosses.map((boss) => boss.name).toList(),
+                  width: width,
+                  hint: '全部 Boss',
+                  compactHint: 'Boss'),
+              _FilterDropdown<int>(
+                  value: maxRank,
+                  values: [0, ...List.generate(10, (index) => 10 - index)],
+                  itemLabel: (value) => value == 0 ? '全部重数' : '$value 重及以下',
+                  compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
+                  width: width,
+                  onChanged: (value) =>
+                      setState(() => maxRank = value ?? maxRank))
+            ]);
+          }),
+          const SizedBox(height: 6),
+          const Text('点击技能可修改重数；名称、可交易状态和删除请前往 Boss 技能管理。',
+              style: TextStyle(color: muted, fontSize: 11)),
+          const SizedBox(height: 4),
+          if (bosses.isEmpty)
+            const Padding(
+                padding: EdgeInsets.only(top: 10),
+                child: Text('没有符合筛选条件的技能',
+                    style: TextStyle(color: muted, fontSize: 12)))
+          else ...[
+            const SizedBox(height: 10),
+            Container(
+                height: 36,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                color: const Color(0xfff7f9f8),
+                child: const Row(children: [
+                  Expanded(
+                      flex: 3,
+                      child: Text('Boss',
+                          style: TextStyle(
+                              color: muted,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700))),
+                  Expanded(
+                      flex: 5,
+                      child: Text('技能',
+                          style: TextStyle(
+                              color: muted,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700))),
+                  SizedBox(
+                      width: 58,
+                      child: Text('重数',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: muted,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700)))
+                ])),
+            for (final boss in bosses)
+              for (final entry
+                  in boss.skills.where(_matches).toList().asMap().entries)
+                InkWell(
+                    onTap: () async {
+                      await showSkillDialog(context, store, entry.value);
+                      if (mounted) setState(() {});
+                    },
+                    child: Container(
+                        constraints: const BoxConstraints(minHeight: 40),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 8),
+                        decoration: const BoxDecoration(
+                            border: Border(top: BorderSide(color: line))),
+                        child: Row(children: [
+                          Expanded(
+                              flex: 3,
+                              child: Text(
+                                  entry.key == 0
+                                      ? bossNameForGender(
+                                          boss, character.gender)
+                                      : '',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      color: ink,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700))),
+                          Expanded(
+                              flex: 5,
+                              child: Text(
+                                  skillNameForGender(
+                                      entry.value, character.gender),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      color:
+                                          entry.value.tradable ? purple : ink,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500))),
+                          SizedBox(
+                              width: 58,
+                              child: Text(
+                                  '${store.level(character.id, entry.value.id)} 重',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                      color: ink,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700)))
+                        ])))
+          ]
+        ]));
+  }
+}
+
+class HomeBookNeeds extends StatelessWidget {
+  const HomeBookNeeds(
+      {required this.store,
+      required this.character,
+      this.height = 120,
+      super.key});
+  final SkillStore store;
+  final CharacterData character;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    final needs = store.bookNeeds(character.id);
+    return SizedBox(
+        height: height,
+        child: CardShell(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('通本需求',
+                  style: TextStyle(
+                      color: ink, fontSize: 15, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 4),
+              const Text('按当前技能重数估算',
+                  style: TextStyle(color: muted, fontSize: 11)),
+              const Spacer(),
+              LayoutBuilder(builder: (context, constraints) {
+                final itemWidth = (constraints.maxWidth - 8) / 2;
+                return Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: needs.entries
+                        .map((entry) => SizedBox(
+                            width: itemWidth,
+                            child:
+                                Row(mainAxisSize: MainAxisSize.min, children: [
+                              Text(entry.key,
+                                  style: const TextStyle(
+                                      color: muted, fontSize: 11)),
+                              const SizedBox(width: 4),
+                              Text('${entry.value}',
+                                  style: const TextStyle(
+                                      color: ink,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w800))
+                            ])))
+                        .toList());
+              })
+            ])));
+  }
+}
+
+class CharacterSwitcher extends StatelessWidget {
+  const CharacterSwitcher({required this.store, this.onSelected, super.key});
+  final SkillStore store;
+  final ValueChanged<String>? onSelected;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+      height: 82,
+      child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: store.activeCharacters.length + 1,
+          separatorBuilder: (_, __) => const SizedBox(width: 10),
+          itemBuilder: (context, index) {
+            if (index == store.activeCharacters.length) {
+              return InkWell(
+                  onTap: () => showCharacterDialog(context, store),
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                      width: 128,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(
+                          color: const Color(0xfff7f9f8),
+                          border: Border.all(color: teal),
+                          borderRadius: BorderRadius.circular(10)),
+                      child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.add, color: teal, size: 20),
+                            SizedBox(width: 6),
+                            Text('添加角色',
+                                style: TextStyle(
+                                    color: teal,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700))
+                          ])));
+            }
+            final character = store.activeCharacters[index];
+            final active = character.id == store.selectedCharacterId;
+            return InkWell(
+                onTap: () {
+                  store.selectCharacter(character.id);
+                  onSelected?.call(character.id);
+                },
+                borderRadius: BorderRadius.circular(10),
+                child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 160),
+                    width: 166,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                        color: active
+                            ? const Color(0xffe1f1ea)
+                            : const Color(0xfff7f9f8),
+                        border: Border.all(color: active ? teal : line),
+                        borderRadius: BorderRadius.circular(10)),
+                    child: Row(children: [
+                      CircleAvatar(
+                          radius: 19,
+                          backgroundColor: active
+                              ? const Color(0xffcbe8dc)
+                              : const Color(0xffe5ece8),
+                          child: Text(
+                              character.name.isEmpty
+                                  ? '角'
+                                  : character.name.substring(0, 1),
+                              style: const TextStyle(
+                                  color: teal, fontWeight: FontWeight.w800))),
+                      const SizedBox(width: 8),
+                      Expanded(
+                          child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                            Text(character.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    color: active ? teal : ink,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700)),
+                            const SizedBox(height: 3),
+                            Text('${character.mind} · ${character.position}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style:
+                                    const TextStyle(color: muted, fontSize: 10))
+                          ]))
+                    ])));
+          }));
+}
+
+class CharacterManagementPage extends StatelessWidget {
+  const CharacterManagementPage({required this.store, super.key});
+  final SkillStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final columns = width >= 1180
+        ? 3
+        : width >= 760
+            ? 2
+            : 1;
+    return PageBody(
+        title: '角色列表',
+        action: Row(mainAxisSize: MainAxisSize.min, children: [
+          TextButton.icon(
+              onPressed: () => store.setPage(4),
+              icon: const Icon(Icons.arrow_back, size: 16),
+              label: const Text('设置')),
+          const SizedBox(width: 8),
+          FilledButton.icon(
+              onPressed: () => showCharacterDialog(context, store),
+              icon: const Icon(Icons.add, size: 17),
+              label: const Text('添加角色'))
+        ]),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('按角色管理独立的技能重数记录，点击角色进入所有技能筛选。',
+              style: TextStyle(color: muted, fontSize: 12)),
+          const SizedBox(height: 18),
+          if (store.activeCharacters.isEmpty)
+            const CardShell(
+                child: Text('暂无角色，请先添加角色。', style: TextStyle(color: muted)))
+          else
+            GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: store.activeCharacters.length,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: columns,
+                    crossAxisSpacing: 16,
+                    mainAxisSpacing: 16,
+                    mainAxisExtent: 216),
+                itemBuilder: (context, index) {
+                  final character = store.activeCharacters[index];
+                  final levels = character.levels.values;
+                  final progress = levels.isEmpty
+                      ? 0.0
+                      : levels.fold<int>(0, (sum, value) => sum + value) /
+                          (levels.length * 10);
+                  return DragTarget<String>(
+                      onWillAcceptWithDetails: (details) =>
+                          details.data != character.id,
+                      onAcceptWithDetails: (details) =>
+                          store.reorderCharacter(details.data, character.id),
+                      builder: (context, candidates, rejected) => InkWell(
+                          onTap: () {
+                            store.selectCharacter(character.id);
+                            store.setPage(3);
+                          },
+                          borderRadius: BorderRadius.circular(10),
+                          child: Container(
+                              padding: const EdgeInsets.all(18),
+                              decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  border: Border.all(color: line),
+                                  borderRadius: BorderRadius.circular(10)),
+                              child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(children: [
+                                      LongPressDraggable<String>(
+                                          data: character.id,
+                                          feedback: Material(
+                                              color: Colors.transparent,
+                                              child: Container(
+                                                  padding:
+                                                      const EdgeInsets.all(10),
+                                                  decoration: BoxDecoration(
+                                                      color: Colors.white,
+                                                      border: Border.all(
+                                                          color: teal),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              10)),
+                                                  child: const Icon(
+                                                      Icons.drag_indicator,
+                                                      color: teal))),
+                                          child: const Tooltip(
+                                              message: '拖动调整角色顺序',
+                                              child: Padding(
+                                                  padding:
+                                                      EdgeInsets.only(right: 8),
+                                                  child: Icon(
+                                                      Icons.drag_indicator,
+                                                      color: muted)))),
+                                      CircleAvatar(
+                                          radius: 23,
+                                          backgroundColor:
+                                              const Color(0xffe8f3ee),
+                                          child: Text(
+                                              character.name.isEmpty
+                                                  ? '角'
+                                                  : character.name
+                                                      .substring(0, 1),
+                                              style: const TextStyle(
+                                                  color: teal,
+                                                  fontSize: 18,
+                                                  fontWeight:
+                                                      FontWeight.w700))),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                          child: Text(character.name,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                  color: ink,
+                                                  fontSize: 18,
+                                                  fontWeight:
+                                                      FontWeight.w700))),
+                                      PopupMenuButton<String>(
+                                          padding: EdgeInsets.zero,
+                                          onSelected: (value) {
+                                            if (value == 'edit') {
+                                              showCharacterDialog(
+                                                  context, store,
+                                                  character: character);
+                                            } else if (value == 'delete') {
+                                              showDeleteCharacterDialog(
+                                                  context, store, character);
+                                            }
+                                          },
+                                          itemBuilder: (context) => [
+                                                const PopupMenuItem(
+                                                    value: 'edit',
+                                                    child: Text('编辑角色')),
+                                                PopupMenuItem(
+                                                    value: 'delete',
+                                                    enabled: store
+                                                            .characters.length >
+                                                        1,
+                                                    child: const Text('删除角色'))
+                                              ])
+                                    ]),
+                                    const SizedBox(height: 14),
+                                    Text(
+                                        '${character.school} · ${character.mind} · ${character.position}',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            color: muted, fontSize: 13)),
+                                    const SizedBox(height: 12),
+                                    ClipRRect(
+                                        borderRadius: BorderRadius.circular(5),
+                                        child: LinearProgressIndicator(
+                                            value: progress.clamp(0, 1),
+                                            minHeight: 7,
+                                            backgroundColor:
+                                                const Color(0xffe2e9e5),
+                                            color: teal)),
+                                    const Spacer(),
+                                    Row(children: [
+                                      Text(
+                                          '${(progress * 100).round()}% 技能重数进度',
+                                          style: const TextStyle(
+                                              color: muted, fontSize: 12)),
+                                      const Spacer(),
+                                      const Text('查看所有技能',
+                                          style: TextStyle(
+                                              color: teal,
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w700))
+                                    ])
+                                  ]))));
+                })
+        ]));
+  }
+}
+
+class CharacterPage extends StatelessWidget {
+  const CharacterPage({required this.store, super.key});
+  final SkillStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final characters = store.activeCharacters;
+    if (characters.isEmpty) {
+      return PageBody(
+          title: '角色',
+          child: const CardShell(
+              child: Text('暂无角色，请前往设置中的角色管理新增角色。',
+                  style: TextStyle(color: muted))));
+    }
+    final selectedIndex = characters
+        .indexWhere((item) => item.id == store.selectedCharacterId)
+        .clamp(0, characters.length - 1);
+    final selected = characters[selectedIndex];
+    return Column(children: [
+      Padding(
+          padding: const EdgeInsets.fromLTRB(28, 22, 28, 12),
+          child: Row(children: [
+            const Expanded(
+                child: Text('角色',
+                    style: TextStyle(
+                        color: ink,
+                        fontSize: 23,
+                        fontWeight: FontWeight.w700))),
+            Text('${selectedIndex + 1} / ${characters.length}',
+                style:
+                    const TextStyle(color: teal, fontWeight: FontWeight.w600)),
+            const SizedBox(width: 10),
+            TextButton.icon(
+                onPressed: () => store.setPage(5),
+                icon: const Icon(Icons.arrow_back, size: 16),
+                label: const Text('角色列表'))
+          ])),
+      SizedBox(
+          height: 92,
+          child: ListView.separated(
+              padding: const EdgeInsets.symmetric(horizontal: 28),
+              scrollDirection: Axis.horizontal,
+              itemCount: characters.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final character = characters[index];
+                final active = character.id == selected.id;
+                return InkWell(
+                    onTap: () => store.selectCharacter(character.id),
+                    borderRadius: BorderRadius.circular(10),
+                    child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        width: 156,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                            color: active
+                                ? const Color(0xffe1f1ea)
+                                : const Color(0xfff7f9f8),
+                            border: Border.all(color: active ? teal : line),
+                            borderRadius: BorderRadius.circular(10)),
+                        child: Row(children: [
+                          CircleAvatar(
+                              radius: 19,
+                              backgroundColor: active
+                                  ? const Color(0xffcbe8dc)
+                                  : const Color(0xffe5ece8),
+                              child: Text(
+                                  character.name.isEmpty
+                                      ? '角'
+                                      : character.name.substring(0, 1),
+                                  style: const TextStyle(
+                                      color: teal,
+                                      fontWeight: FontWeight.w800))),
+                          const SizedBox(width: 8),
+                          Expanded(
+                              child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                Text(character.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                        color: active ? teal : ink,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700)),
+                                const SizedBox(height: 3),
+                                Text(
+                                    '${character.mind} · ${character.position}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        color: muted, fontSize: 10))
+                              ]))
+                        ])));
+              })),
+      Expanded(
+          child: OverviewPage(
+              store: store, character: selected, onlyBossSkills: true))
+    ]);
+  }
+}
+
+class OverviewPage extends StatelessWidget {
+  const OverviewPage(
+      {required this.store,
+      this.character,
+      this.onlyBossSkills = false,
+      super.key});
+  final SkillStore store;
+  final CharacterData? character;
+  final bool onlyBossSkills;
+  @override
+  Widget build(BuildContext context) {
+    final current = character ?? store.selectedCharacter;
+    if (current == null) return const SizedBox.shrink();
+    final needs = store.bookNeeds(current.id);
+    final skillCount = current.levels.values.where((value) => value > 0).length;
+    final maxed = current.levels.values.where((value) => value >= 10).length;
+    final compact = MediaQuery.sizeOf(context).width < 760;
+    if (onlyBossSkills) {
+      return PageBody(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        CardShell(
+            child: Row(children: [
+          CircleAvatar(
+              radius: 24,
+              backgroundColor: const Color(0xffe1f1ea),
+              child: Text(
+                  current.name.isEmpty ? '角' : current.name.substring(0, 1),
+                  style: const TextStyle(
+                      color: teal, fontSize: 20, fontWeight: FontWeight.w800))),
+          const SizedBox(width: 12),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text(current.name,
+                    style: const TextStyle(
+                        color: ink, fontSize: 18, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 3),
+                Text(
+                    '${current.gender} · ${current.school} · ${current.mind} · ${current.position}',
+                    style: const TextStyle(color: muted, fontSize: 12))
+              ]))
+        ])),
+        const SizedBox(height: 18),
+        const Text('Boss 技能重数',
+            style: TextStyle(
+                color: ink, fontSize: 16, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 10),
+        _bossTable(current)
+      ]));
+    }
+    return PageBody(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      LayoutBuilder(builder: (context, constraints) {
+        final cards = [
+          MetricCard(
+              width: double.infinity,
+              label: '精神值',
+              value: formatNumber(store.stat(current.id, true)),
+              accent: teal,
+              icon: Icons.bolt),
+          MetricCard(
+              width: double.infinity,
+              label: '耐力值',
+              value: formatNumber(store.stat(current.id, false)),
+              accent: const Color(0xff69a991),
+              icon: Icons.shield_outlined),
+          MetricCard(
+              width: double.infinity,
+              label: '已录入技能',
+              value: '$skillCount / ${current.levels.length}',
+              accent: gold,
+              icon: Icons.menu_book_outlined),
+          MetricCard(
+              width: double.infinity,
+              label: '十重技能',
+              value: '$maxed',
+              accent: purple,
+              icon: Icons.workspace_premium_outlined)
+        ];
+        return _fourCardRow(cards, constraints.maxWidth);
+      }),
+      const SizedBox(height: 22),
+      compact
+          ? Column(children: [
+              _characterCard(context, current),
+              const SizedBox(height: 18),
+              _bookCard(needs)
+            ])
+          : Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Expanded(flex: 5, child: _characterCard(context, current)),
+              const SizedBox(width: 18),
+              Expanded(flex: 4, child: _bookCard(needs))
+            ]),
+      const SizedBox(height: 22),
+      PageBody(title: 'Boss 完成度', child: _bossTable(current))
+    ]));
+  }
+
+  Widget _characterCard(BuildContext context, CharacterData character) =>
+      CardShell(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          CircleAvatar(
+              radius: 24,
+              backgroundColor: const Color(0xffe1f1ea),
+              child: Text(
+                  character.name.isEmpty ? '角' : character.name.substring(0, 1),
+                  style: const TextStyle(
+                      color: teal, fontSize: 20, fontWeight: FontWeight.w800))),
+          const SizedBox(width: 12),
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text(character.name,
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.w800, color: ink)),
+                Text(
+                    '${character.gender} · ${character.school} · ${character.mind} · ${character.position}',
+                    style: const TextStyle(color: muted, fontSize: 12))
+              ])),
+        ]),
+        const SizedBox(height: 24),
+        Wrap(spacing: 28, runSpacing: 14, children: [
+          InfoItem(
+              label: '公式基础精神',
+              value: formatNumber(store.computedBaseStat(character.id, true))),
+          InfoItem(
+              label: '公式基础耐力',
+              value: formatNumber(store.computedBaseStat(character.id, false))),
+          InfoItem(
+              label: '未学技能',
+              value: '${character.levels.values.where((v) => v == 0).length}')
+        ])
+      ]));
+  Widget _bookCard(Map<String, int> needs) => CardShell(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('通本需求',
+            style: TextStyle(
+                fontSize: 16, fontWeight: FontWeight.w800, color: ink)),
+        const SizedBox(height: 5),
+        const Text('按当前技能重数估算', style: TextStyle(color: muted, fontSize: 12)),
+        const SizedBox(height: 16),
+        ...needs.entries.map((entry) => Padding(
+            padding: const EdgeInsets.only(bottom: 11),
+            child: Row(children: [
+              Container(
+                  width: 36,
+                  height: 26,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                      color: entry.key == '通本4'
+                          ? const Color(0xfffff3dd)
+                          : const Color(0xffe8f3ee),
+                      borderRadius: BorderRadius.circular(7)),
+                  child: Text(entry.key.substring(2),
+                      style: TextStyle(
+                          color: entry.key == '通本4' ? gold : teal,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800))),
+              const SizedBox(width: 10),
+              const Text('需要数量', style: TextStyle(color: muted, fontSize: 12)),
+              const Spacer(),
+              Text('${entry.value}',
+                  style: const TextStyle(
+                      color: ink, fontSize: 18, fontWeight: FontWeight.w800))
+            ])))
+      ]));
+  Widget _bossTable(CharacterData character) => CardShell(
+      padding: EdgeInsets.zero,
+      child: Column(children: [
+        Container(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            color: const Color(0xfff7f9f8),
+            child: const Row(children: [
+              Expanded(
+                  flex: 3,
+                  child: Text('Boss',
+                      style: TextStyle(
+                          color: muted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700))),
+              Expanded(
+                  child: Text('完成重数',
+                      style: TextStyle(
+                          color: muted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700))),
+              Expanded(
+                  child: Text('精神提升',
+                      style: TextStyle(
+                          color: muted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700))),
+              Expanded(
+                  child: Text('耐力提升',
+                      style: TextStyle(
+                          color: muted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700)))
+            ])),
+        ...store.bosses.map((boss) {
+          final rank = store.rankFor(character.id, boss);
+          final multiplier =
+              const [0, 1, 2, 3, 4, 5, 7, 10, 15, 22.5, 33.75][rank];
+          return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
+              decoration: const BoxDecoration(
+                  border: Border(top: BorderSide(color: line))),
+              child: Row(children: [
+                Expanded(
+                    flex: 3,
+                    child: Text(bossNameForGender(boss, character.gender),
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700, color: ink))),
+                Expanded(child: RankBadge(rank: rank)),
+                Expanded(
+                    child: Text(
+                        '+${formatNumber(bossStatForGender(boss, character.gender, true) * multiplier)}',
+                        style: const TextStyle(
+                            color: teal, fontWeight: FontWeight.w700))),
+                Expanded(
+                    child: Text(
+                        '+${formatNumber(bossStatForGender(boss, character.gender, false) * multiplier)}',
+                        style: const TextStyle(
+                            color: Color(0xff69a991),
+                            fontWeight: FontWeight.w700)))
+              ]));
+        })
+      ]));
+}
+
+class SkillMatrix extends StatelessWidget {
+  const SkillMatrix(
+      {required this.store,
+      required this.skillNames,
+      this.accent = ink,
+      this.characters,
+      super.key});
+  final SkillStore store;
+  final List<String> skillNames;
+  final Color accent;
+  final List<CharacterData>? characters;
+
+  @override
+  Widget build(BuildContext context) {
+    final characters = this.characters ?? store.activeCharacters;
+    if (skillNames.isEmpty) {
+      return CardShell(
+          child: const Text('暂无技能记录', style: TextStyle(color: muted)));
+    }
+    return LayoutBuilder(builder: (context, constraints) {
+      final skillColumnWidth = constraints.maxWidth < 600 ? 142.0 : 184.0;
+      final characterColumnWidth = constraints.maxWidth < 600 ? 88.0 : 104.0;
+      final visibleCharacterWidth =
+          math.max(0.0, constraints.maxWidth - skillColumnWidth);
+      final characterTableWidth = math.max(
+          visibleCharacterWidth, characters.length * characterColumnWidth);
+      final headerHeight = constraints.maxWidth < 600 ? 42.0 : 46.0;
+      final rowHeight = constraints.maxWidth < 600 ? 46.0 : 50.0;
+
+      String displaySkillLabel(String name) {
+        final skill = store.findSkill(name);
+        if (skill == null) return name;
+        return characters.length == 1
+            ? skillNameForGender(skill, characters.single.gender)
+            : managementSkillName(skill);
+      }
+
+      Widget skillCell(String label, {bool header = false}) => _SkillMatrixCell(
+          width: skillColumnWidth,
+          height: header ? headerHeight : rowHeight,
+          header: header,
+          alignment: Alignment.centerLeft,
+          child: Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: header ? muted : accent,
+                  fontSize: header ? 12 : 13,
+                  fontWeight: header ? FontWeight.w700 : FontWeight.w600)));
+
+      Widget characterHeader(CharacterData character) => _SkillMatrixCell(
+          width: characterColumnWidth,
+          height: headerHeight,
+          header: true,
+          alignment: Alignment.center,
+          child: Text(character.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  color: muted, fontSize: 12, fontWeight: FontWeight.w700)));
+
+      return CardShell(
+          padding: EdgeInsets.zero,
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Column(children: [
+              skillCell('技能名称', header: true),
+              ...skillNames.map((name) => skillCell(displaySkillLabel(name)))
+            ]),
+            Expanded(
+                child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(
+                        width: characterTableWidth,
+                        child: Column(children: [
+                          Row(
+                              children:
+                                  characters.map(characterHeader).toList()),
+                          ...skillNames.map((skillName) => Row(
+                              children: characters
+                                  .map((character) => _SkillMatrixCell(
+                                      width: characterColumnWidth,
+                                      height: rowHeight,
+                                      alignment: Alignment.center,
+                                      child: RankBadge(
+                                          rank: store.skillLevelForName(
+                                              character.id, skillName),
+                                          plain: true)))
+                                  .toList()))
+                        ]))))
+          ]));
+    });
+  }
+}
+
+class _SkillMatrixCell extends StatelessWidget {
+  const _SkillMatrixCell(
+      {required this.width,
+      required this.height,
+      required this.child,
+      required this.alignment,
+      this.header = false});
+  final double width;
+  final double height;
+  final Widget child;
+  final Alignment alignment;
+  final bool header;
+
+  @override
+  Widget build(BuildContext context) => Container(
+      width: width,
+      height: height,
+      alignment: alignment,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+          color: header ? const Color(0xfff7f9f8) : Colors.white,
+          border: const Border(
+              right: BorderSide(color: line), bottom: BorderSide(color: line))),
+      child: child);
+}
+
+class SkillSummaryFilters extends StatefulWidget {
+  const SkillSummaryFilters(
+      {required this.store,
+      required this.skillNames,
+      required this.accent,
+      super.key});
+  final SkillStore store;
+  final List<String> skillNames;
+  final Color accent;
+
+  @override
+  State<SkillSummaryFilters> createState() => _SkillSummaryFiltersState();
+}
+
+class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
+  final skillQuery = TextEditingController();
+  final bossQuery = TextEditingController();
+  String characterId = 'all';
+  int maxRank = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    skillQuery.addListener(_onSkillQueryChanged);
+    bossQuery.addListener(_onSkillQueryChanged);
+  }
+
+  void _onSkillQueryChanged() => setState(() {});
+
+  @override
+  void dispose() {
+    skillQuery.removeListener(_onSkillQueryChanged);
+    bossQuery.removeListener(_onSkillQueryChanged);
+    skillQuery.dispose();
+    bossQuery.dispose();
+    super.dispose();
+  }
+
+  List<CharacterData> get filteredCharacters => widget.store.activeCharacters
+      .where((character) => characterId == 'all' || character.id == characterId)
+      .toList();
+
+  List<String> get filteredSkills {
+    final query = skillQuery.text.trim().toLowerCase();
+    final bossText = bossQuery.text.trim().toLowerCase();
+    final characters = filteredCharacters;
+    return widget.skillNames.where((name) {
+      final matchesBoss = bossText.isEmpty ||
+          widget.store.bosses.any((boss) =>
+              boss.name.toLowerCase().contains(bossText) &&
+              boss.skills.any((skill) => skill.name == name));
+      final matchesRank = maxRank == 0 ||
+          characters.any((character) {
+            final rank = widget.store.skillLevelForName(character.id, name);
+            return rank > 0 && rank <= maxRank;
+          });
+      return (query.isEmpty || name.toLowerCase().contains(query)) &&
+          matchesBoss &&
+          matchesRank;
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final characters = filteredCharacters;
+    final skills = filteredSkills;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      LayoutBuilder(builder: (context, constraints) {
+        final width = _filterItemWidth(constraints.maxWidth, 4);
+        return Wrap(spacing: 10, runSpacing: 10, children: [
+          _FilterDropdown<String>(
+              value: characterId,
+              values: [
+                'all',
+                ...widget.store.activeCharacters.map((item) => item.id)
+              ],
+              itemLabel: (value) => value == 'all'
+                  ? '全部角色'
+                  : widget.store.activeCharacters
+                      .firstWhere((item) => item.id == value)
+                      .name,
+              compactLabel: (value) => value == 'all'
+                  ? '角色'
+                  : widget.store.activeCharacters
+                      .firstWhere((item) => item.id == value)
+                      .name,
+              width: width,
+              onChanged: (value) =>
+                  setState(() => characterId = value ?? 'all')),
+          _NameAutocomplete(
+              controller: bossQuery,
+              names: widget.store.bosses.map((boss) => boss.name).toList(),
+              width: width,
+              hint: '全部 Boss',
+              compactHint: 'Boss'),
+          _NameAutocomplete(
+              controller: skillQuery,
+              names: widget.skillNames,
+              width: width,
+              hint: '技能名称',
+              compactHint: '技能'),
+          _FilterDropdown<int>(
+              value: maxRank,
+              values: [0, ...List.generate(10, (index) => 10 - index)],
+              itemLabel: (value) => value == 0 ? '全部重数' : '$value 重及以下',
+              compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
+              width: width,
+              onChanged: (value) => setState(() => maxRank = value ?? maxRank))
+        ]);
+      }),
+      const SizedBox(height: 10),
+      Text('技能 ${skills.length} 个 · 角色 ${characters.length} 个',
+          style: TextStyle(
+              color: widget.accent, fontSize: 12, fontWeight: FontWeight.w600)),
+      const SizedBox(height: 12),
+      if (characters.isEmpty)
+        const CardShell(
+            child: Text('没有符合条件的角色', style: TextStyle(color: muted)))
+      else if (skills.isEmpty)
+        const CardShell(
+            child: Text('没有符合条件的技能', style: TextStyle(color: muted)))
+      else
+        SkillMatrix(
+            store: widget.store,
+            skillNames: skills,
+            accent: widget.accent,
+            characters: characters)
+    ]);
+  }
+}
+
+class ImportantPage extends StatelessWidget {
+  const ImportantPage({required this.store, super.key});
+  final SkillStore store;
+
+  @override
+  Widget build(BuildContext context) => PageBody(
+      title: '重要技能汇总',
+      action: FilledButton.icon(
+          onPressed: () => showImportantDialog(context, store),
+          icon: const Icon(Icons.add, size: 17),
+          label: const Text('添加技能')),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Padding(
+            padding: EdgeInsets.only(bottom: 14),
+            child: Text('重数随每个角色的技能页同步，仅用于查看，不在这里编辑。',
+                style: TextStyle(color: muted, fontSize: 12))),
+        SkillSummaryFilters(
+            store: store, skillNames: store.importantSkills, accent: ink)
+      ]));
+}
+
+class PurplePage extends StatelessWidget {
+  const PurplePage({required this.store, super.key});
+  final SkillStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final highest = store.purpleSkills.fold<int>(
+        0,
+        (current, name) =>
+            math.max(current, store.highestSkillLevelForName(name)));
+    final highestCount = store.purpleSkills
+        .where((name) => store.highestSkillLevelForName(name) == highest)
+        .length;
+    return PageBody(
+        title: '可交易技能统计',
+        action: Text('${store.purpleSkills.length} 个紫书技能',
+            style: const TextStyle(color: purple, fontWeight: FontWeight.w700)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: CardShell(
+                  child: Row(children: [
+                const Icon(Icons.auto_awesome, color: purple),
+                const SizedBox(width: 10),
+                const Expanded(
+                    child: Text('可交易技能以紫色标识，重数按角色技能页同步展示。',
+                        style: TextStyle(color: muted, fontSize: 12))),
+                Text(
+                    highest == 0 ? '暂无已学习' : '$highestCount 个达到最高 ${highest} 重',
+                    style: const TextStyle(
+                        color: purple, fontWeight: FontWeight.w700))
+              ]))),
+          SkillSummaryFilters(
+              store: store, skillNames: store.purpleSkills, accent: purple)
+        ]));
+  }
+}
+
+class AllSkillsPage extends StatefulWidget {
+  const AllSkillsPage({required this.store, super.key});
+  final SkillStore store;
+
+  @override
+  State<AllSkillsPage> createState() => _AllSkillsPageState();
+}
+
+class _AllSkillsPageState extends State<AllSkillsPage> {
+  final bossQuery = TextEditingController();
+  String characterId = 'all';
+  int maxRank = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    bossQuery.addListener(_onBossQueryChanged);
+    if (widget.store.selectedCharacterId.isNotEmpty) {
+      characterId = widget.store.selectedCharacterId;
+    }
+  }
+
+  void _onBossQueryChanged() => setState(() {});
+
+  @override
+  void dispose() {
+    bossQuery.removeListener(_onBossQueryChanged);
+    bossQuery.dispose();
+    super.dispose();
+  }
+
+  List<CharacterData> get characters => widget.store.activeCharacters;
+
+  List<Boss> get filteredBosses {
+    final query = bossQuery.text.trim().toLowerCase();
+    final character = characterId == 'all'
+        ? null
+        : characters.firstWhere((item) => item.id == characterId,
+            orElse: () => characters.first);
+    return widget.store.bosses.where((boss) {
+      final rank =
+          character == null ? 0 : widget.store.rankFor(character.id, boss);
+      return (query.isEmpty || boss.name.toLowerCase().contains(query)) &&
+          (maxRank == 0 || (rank > 0 && rank <= maxRank));
+    }).toList();
+  }
+
+  Future<void> _setAllRanks() async {
+    var selectedRank = 1;
+    final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+                    title: const Text('设置全部技能重数'),
+                    content: SizedBox(
+                        width: 260,
+                        child: _LabeledFilterDropdown<int>(
+                            label: characterId == 'all'
+                                ? '全部角色的全部技能'
+                                : '当前角色的全部技能',
+                            value: selectedRank,
+                            values: List.generate(10, (index) => 10 - index),
+                            itemLabel: (value) => '$value 重',
+                            width: 260,
+                            onChanged: (value) => setDialogState(
+                                () => selectedRank = value ?? selectedRank))),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(dialogContext, false),
+                          child: const Text('取消')),
+                      FilledButton(
+                          onPressed: () => Navigator.pop(dialogContext, true),
+                          child: const Text('确认设置'))
+                    ])));
+    if (confirmed != true) return;
+    widget.store.setAllSkillLevels(selectedRank,
+        characterId: characterId == 'all' ? null : characterId);
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final character = characterId == 'all'
+        ? null
+        : characters.firstWhere((item) => item.id == characterId,
+            orElse: () => characters.first);
+    return PageBody(
+        title: '所有技能汇总',
+        action: Text('${filteredBosses.length} 个 Boss',
+            style: const TextStyle(color: teal, fontWeight: FontWeight.w600)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          CharacterSwitcher(
+              store: widget.store,
+              onSelected: (value) => setState(() => characterId = value)),
+          const SizedBox(height: 10),
+          Align(
+              alignment: Alignment.centerRight,
+              child: OutlinedButton.icon(
+                  onPressed: characters.isEmpty ? null : _setAllRanks,
+                  icon: const Icon(Icons.layers_outlined, size: 17),
+                  label: Text(
+                      characterId == 'all' ? '设置全部角色技能重数' : '设置当前角色全部技能重数'))),
+          const SizedBox(height: 12),
+          LayoutBuilder(builder: (context, constraints) {
+            final width = _filterItemWidth(constraints.maxWidth, 2);
+            return Wrap(spacing: 10, runSpacing: 10, children: [
+              _NameAutocomplete(
+                  controller: bossQuery,
+                  names: widget.store.bosses.map((boss) => boss.name).toList(),
+                  width: width,
+                  hint: '全部 Boss',
+                  compactHint: 'Boss'),
+              _FilterDropdown<int>(
+                  value: maxRank,
+                  values: [0, ...List.generate(10, (index) => 10 - index)],
+                  itemLabel: (value) => value == 0 ? '全部重数' : '$value 重及以下',
+                  compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
+                  width: width,
+                  onChanged: (value) => setState(() => maxRank = value ?? 0))
+            ]);
+          }),
+          const SizedBox(height: 10),
+          Text(
+              character == null
+                  ? '切换角色后可按 Boss 和技能重数筛选。'
+                  : '当前角色：${character.name} · 符合条件的 Boss：${filteredBosses.length} 个',
+              style: const TextStyle(color: muted, fontSize: 12)),
+          const SizedBox(height: 14),
+          if (filteredBosses.isEmpty)
+            const CardShell(
+                child: Text('没有符合条件的 Boss', style: TextStyle(color: muted)))
+          else
+            _AllSkillsTable(
+                store: widget.store,
+                bosses: filteredBosses,
+                character: character,
+                onChanged: () => setState(() {}))
+        ]));
+  }
+}
+
+class _AllSkillsTable extends StatefulWidget {
+  const _AllSkillsTable(
+      {required this.store,
+      required this.bosses,
+      required this.character,
+      required this.onChanged});
+  final SkillStore store;
+  final List<Boss> bosses;
+  final CharacterData? character;
+  final VoidCallback onChanged;
+
+  @override
+  State<_AllSkillsTable> createState() => _AllSkillsTableState();
+}
+
+class _AllSkillsTableState extends State<_AllSkillsTable> {
+  final Set<String> _expandedBossIds = {};
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(
+              width: math.max(360.0, constraints.maxWidth),
+              child: Column(children: [
+                Container(
+                    height: 40,
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    color: const Color(0xfff7f9f8),
+                    child: const Row(children: [
+                      Expanded(
+                          flex: 5,
+                          child: Text('Boss / 技能',
+                              style: TextStyle(
+                                  color: muted,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700))),
+                      Expanded(
+                          flex: 2,
+                          child: Text('重数',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                  color: muted,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700))),
+                      Expanded(
+                          flex: 2,
+                          child: Text('精神',
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                  color: muted,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700))),
+                      Expanded(
+                          flex: 2,
+                          child: Text('耐力',
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                  color: muted,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700)))
+                    ])),
+                for (final boss in widget.bosses) ...[
+                  InkWell(
+                      onTap: () => setState(() {
+                            if (!_expandedBossIds.add(boss.id)) {
+                              _expandedBossIds.remove(boss.id);
+                            }
+                          }),
+                      child: _AllSkillsTableRow(
+                          name: bossNameForGender(
+                              boss, widget.character?.gender ?? '女性'),
+                          rank: widget.character == null
+                              ? null
+                              : widget.store
+                                  .rankFor(widget.character!.id, boss),
+                          spirit:
+                              '+${formatNumber(bossStatForGender(boss, widget.character?.gender ?? '女性', true))}',
+                          stamina:
+                              '+${formatNumber(bossStatForGender(boss, widget.character?.gender ?? '女性', false))}',
+                          bossRow: true,
+                          expanded: _expandedBossIds.contains(boss.id))),
+                  if (_expandedBossIds.contains(boss.id))
+                    for (final skill in boss.skills.where((skill) =>
+                        widget.character == null ||
+                        skillAppliesToGender(skill, widget.character!.gender)))
+                      InkWell(
+                          onTap: () async {
+                            await showSkillDialog(context, widget.store, skill);
+                            widget.onChanged();
+                          },
+                          child: _AllSkillsTableRow(
+                              name: skillNameForGender(
+                                  skill, widget.character?.gender ?? '女性'),
+                              nameColor: skill.tradable ? purple : ink,
+                              rank: widget.character == null
+                                  ? null
+                                  : widget.store
+                                      .level(widget.character!.id, skill.id)))
+                ]
+              ]))));
+}
+
+class _AllSkillsTableRow extends StatelessWidget {
+  const _AllSkillsTableRow(
+      {required this.name,
+      required this.rank,
+      this.spirit,
+      this.stamina,
+      this.bossRow = false,
+      this.expanded = false,
+      this.nameColor = ink});
+  final String name;
+  final int? rank;
+  final String? spirit;
+  final String? stamina;
+  final bool bossRow;
+  final bool expanded;
+  final Color nameColor;
+
+  @override
+  Widget build(BuildContext context) => Container(
+      constraints: BoxConstraints(minHeight: bossRow ? 44 : 40),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+          color: bossRow ? const Color(0xfffbfcfb) : Colors.white,
+          border: const Border(top: BorderSide(color: line))),
+      child: Row(children: [
+        Expanded(
+            flex: 5,
+            child: Padding(
+                padding: EdgeInsets.only(left: bossRow ? 0 : 16),
+                child: Row(children: [
+                  if (bossRow) ...[
+                    Icon(
+                        expanded
+                            ? Icons.keyboard_arrow_down
+                            : Icons.keyboard_arrow_right,
+                        size: 18,
+                        color: muted),
+                    const SizedBox(width: 4)
+                  ],
+                  Expanded(
+                      child: Text(name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: nameColor,
+                              fontSize: bossRow ? 13 : 12,
+                              fontWeight:
+                                  bossRow ? FontWeight.w800 : FontWeight.w500)))
+                ]))),
+        Expanded(
+            flex: 2,
+            child: Text(
+                rank == null
+                    ? '—'
+                    : rank == 0
+                        ? (bossRow ? '未完成' : '未学')
+                        : '$rank 重',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: bossRow ? teal : ink,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700))),
+        Expanded(
+            flex: 2,
+            child: Text(spirit ?? '',
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                    color: teal, fontSize: 12, fontWeight: FontWeight.w700))),
+        Expanded(
+            flex: 2,
+            child: Text(stamina ?? '',
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                    color: Color(0xff69a991),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700)))
+      ]));
+}
+
+class BossPage extends StatelessWidget {
+  const BossPage({required this.store, super.key});
+  final SkillStore store;
+  @override
+  Widget build(BuildContext context) => PageBody(
+      title: 'Boss 技能管理',
+      action: TextButton.icon(
+          onPressed: () => store.setPage(4),
+          icon: const Icon(Icons.arrow_back, size: 16),
+          label: const Text('设置')),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        CardShell(
+            child: Row(children: [
+          const Icon(Icons.info_outline, color: teal),
+          const SizedBox(width: 10),
+          const Expanded(
+              child: Text('拖动 Boss 左侧把手可调整显示顺序；技能修改会同步到所有已有角色，增量导入只补充未添加内容。',
+                  style: TextStyle(color: muted, fontSize: 12))),
+          Text('${store.bosses.length} 个 Boss',
+              style: const TextStyle(color: teal, fontWeight: FontWeight.w800))
+        ])),
+        const SizedBox(height: 12),
+        Wrap(spacing: 9, runSpacing: 9, children: [
+          FilledButton.icon(
+              onPressed: () => showBossDialog(context, store),
+              icon: const Icon(Icons.add, size: 17),
+              label: const Text('录入新 Boss')),
+          OutlinedButton.icon(
+              onPressed: () => _exportBosses(context),
+              icon: const Icon(Icons.file_upload_outlined, size: 17),
+              label: const Text('导出全部')),
+          OutlinedButton.icon(
+              onPressed: () => _importBosses(context),
+              icon: const Icon(Icons.file_download_outlined, size: 17),
+              label: const Text('增量导入'))
+        ]),
+        const SizedBox(height: 14),
+        ReorderableListView.builder(
+            shrinkWrap: true,
+            primary: false,
+            physics: const NeverScrollableScrollPhysics(),
+            buildDefaultDragHandles: false,
+            itemCount: store.bosses.length,
+            onReorder: store.reorderBoss,
+            itemBuilder: (context, index) {
+              final boss = store.bosses[index];
+              return Padding(
+                  key: ValueKey(boss.id),
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: CardShell(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                        Row(children: [
+                          ReorderableDragStartListener(
+                              index: index,
+                              child: const Padding(
+                                  padding: EdgeInsets.only(right: 8),
+                                  child: Tooltip(
+                                      message: '拖动调整显示顺序',
+                                      child: Icon(Icons.drag_indicator,
+                                          color: muted)))),
+                          Expanded(
+                              child: Text(
+                                  boss.name == '杜姬欣' || boss.name == '杜姬欣/钱宗龙'
+                                      ? '杜姬欣/钱宗龙'
+                                      : boss.name,
+                                  style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w800,
+                                      color: ink))),
+                          StatPill(label: boss.type),
+                          const SizedBox(width: 7),
+                          StatPill(label: '精 +${formatNumber(boss.spirit)}'),
+                          const SizedBox(width: 7),
+                          StatPill(label: '耐 +${formatNumber(boss.stamina)}'),
+                          const SizedBox(width: 8),
+                          IconButton(
+                              tooltip: '编辑 Boss',
+                              onPressed: () =>
+                                  showBossDialog(context, store, boss: boss),
+                              icon:
+                                  const Icon(Icons.edit_outlined, color: teal)),
+                          IconButton(
+                              tooltip: '删除 Boss',
+                              onPressed: () =>
+                                  showDeleteBossDialog(context, store, boss),
+                              icon: const Icon(Icons.delete_outline,
+                                  color: Colors.redAccent)),
+                          IconButton(
+                              tooltip: '新增技能',
+                              onPressed: () =>
+                                  showAddSkillDialog(context, store, boss),
+                              icon: const Icon(Icons.add_circle_outline,
+                                  color: teal))
+                        ]),
+                        const SizedBox(height: 12),
+                        Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: boss.skills
+                                .map((skill) => BossSkillTile(
+                                    skill: skill,
+                                    onTap: () => showSkillDialog(
+                                        context, store, skill,
+                                        allowNameEdit: true)))
+                                .toList())
+                      ])));
+            })
+      ]));
+
+  Future<void> _exportBosses(BuildContext context) async {
+    final exported = await store.exportBosses();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(exported ? '已导出全部 Boss 和技能' : '已取消导出')));
+  }
+
+  Future<void> _importBosses(BuildContext context) async {
+    try {
+      final result = await store.importBosses();
+      if (!context.mounted || result == null) return;
+      final message = result.bossesAdded == 0 && result.skillsAdded == 0
+          ? '没有需要新增的 Boss 或技能'
+          : '已新增 ${result.bossesAdded} 个 Boss、${result.skillsAdded} 个技能';
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('导入失败：$error')));
+    }
+  }
+}
+
+class BossSkillTile extends StatelessWidget {
+  const BossSkillTile({required this.skill, required this.onTap, super.key});
+  final Skill skill;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(9),
+      child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+              color: skill.tradable
+                  ? const Color(0xfff4edfb)
+                  : const Color(0xfff7f9f8),
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(
+                  color: skill.tradable ? const Color(0xffdec9f2) : line)),
+          child: Text(managementSkillName(skill),
+              style: TextStyle(
+                  color: skill.tradable ? purpleColor : ink,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600))));
+}
+
+class SettingsPage extends StatelessWidget {
+  const SettingsPage({required this.store, super.key});
+  final SkillStore store;
+
+  @override
+  Widget build(BuildContext context) => PageBody(
+      title: '设置',
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        _settingsSection(
+            icon: Icons.palette_outlined,
+            title: '外观',
+            child: Column(children: [
+              ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                      store.themeMode == ThemeMode.dark
+                          ? Icons.dark_mode_outlined
+                          : Icons.light_mode_outlined,
+                      color: teal),
+                  title: const Text('主题',
+                      style: TextStyle(color: ink, fontSize: 13)),
+                  subtitle: const Text('可选择浅色、深色或跟随系统',
+                      style: TextStyle(color: muted, fontSize: 12)),
+                  trailing: TextButton(
+                      onPressed: () => _selectThemeMode(context),
+                      child: Text(themeModeLabel(store.themeMode))))
+            ])),
+        const SizedBox(height: 16),
+        _settingsSection(
+            icon: Icons.sync_outlined,
+            title: '同步与备份',
+            child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.cloud_sync_outlined, color: teal),
+                title: const Text('同步与备份设置',
+                    style: TextStyle(color: ink, fontSize: 14)),
+                subtitle: Text(
+                    store.syncConfig?.isValid == true
+                        ? '${store.syncMessage ?? 'WebDAV 已配置'} · 点击进入管理'
+                        : '本地备份、WebDAV 同步与远程恢复',
+                    style: const TextStyle(color: muted, fontSize: 12)),
+                trailing: const Icon(Icons.chevron_right, color: muted),
+                onTap: () => store.setPage(7))),
+        const SizedBox(height: 16),
+        _settingsSection(
+            icon: Icons.groups_outlined,
+            title: '角色管理',
+            child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.groups_outlined, color: teal),
+                title: const Text('角色列表',
+                    style: TextStyle(color: ink, fontSize: 14)),
+                subtitle: Text(
+                    '${store.activeCharacters.length} 个角色 · 点击进入角色列表，可添加、编辑或删除',
+                    style: const TextStyle(color: muted, fontSize: 12)),
+                trailing: const Icon(Icons.chevron_right, color: muted),
+                onTap: () => store.setPage(5))),
+        const SizedBox(height: 16),
+        _settingsSection(
+            icon: Icons.edit_note_outlined,
+            title: 'Boss 管理',
+            child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.edit_note_outlined, color: teal),
+                title: const Text('Boss 列表',
+                    style: TextStyle(color: ink, fontSize: 14)),
+                subtitle: Text(
+                    '${store.bosses.length} 个 Boss · 点击进入页面管理 Boss 和所属技能',
+                    style: const TextStyle(color: muted, fontSize: 12)),
+                trailing: const Icon(Icons.chevron_right, color: muted),
+                onTap: () => store.setPage(6)))
+      ]));
+
+  Future<void> _selectThemeMode(BuildContext context) async {
+    final selected = await showDialog<ThemeMode>(
+        context: context,
+        builder: (dialogContext) => SimpleDialog(
+            title: const Text('外观模式'),
+            children: ThemeMode.values
+                .map((mode) => RadioListTile<ThemeMode>(
+                    value: mode,
+                    groupValue: store.themeMode,
+                    title: Text(themeModeLabel(mode)),
+                    onChanged: (value) => Navigator.pop(dialogContext, value)))
+                .toList()));
+    if (selected != null) await store.setThemeMode(selected);
+  }
+
+  Widget _settingsSection(
+          {required IconData icon,
+          required String title,
+          required Widget child}) =>
+      CardShell(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icon, color: teal),
+          const SizedBox(width: 9),
+          Text(title,
+              style: const TextStyle(
+                  color: ink, fontSize: 16, fontWeight: FontWeight.w600))
+        ]),
+        const SizedBox(height: 10),
+        child
+      ]));
+}
+
+class SyncBackupPage extends StatelessWidget {
+  const SyncBackupPage({required this.store, super.key});
+  final SkillStore store;
+
+  @override
+  Widget build(BuildContext context) => PageBody(
+      title: '同步与备份',
+      action: TextButton.icon(
+          onPressed: () => store.setPage(4),
+          icon: const Icon(Icons.arrow_back, size: 16),
+          label: const Text('设置')),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        CardShell(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Row(children: [
+            Icon(Icons.save_outlined, color: teal),
+            SizedBox(width: 9),
+            Text('本地备份',
+                style: TextStyle(
+                    color: ink, fontSize: 16, fontWeight: FontWeight.w600))
+          ]),
+          const SizedBox(height: 10),
+          const ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text('本地自动保存', style: TextStyle(color: ink, fontSize: 13)),
+              subtitle: Text('每次修改会自动保存到本机，无需手动操作。',
+                  style: TextStyle(color: muted, fontSize: 12)),
+              trailing: Icon(Icons.check_circle, color: teal)),
+          const Divider(height: 1),
+          const SizedBox(height: 12),
+          Wrap(spacing: 10, runSpacing: 10, children: [
+            FilledButton.icon(
+                onPressed: () => _export(context),
+                icon: const Icon(Icons.file_upload_outlined, size: 17),
+                label: const Text('导出本地备份')),
+            OutlinedButton.icon(
+                onPressed: () => _import(context),
+                icon: const Icon(Icons.file_download_outlined, size: 17),
+                label: const Text('导入本地备份'))
+          ])
+        ])),
+        const SizedBox(height: 16),
+        CardShell(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Row(children: [
+            Icon(Icons.cloud_outlined, color: teal),
+            SizedBox(width: 9),
+            Text('WebDAV 云同步',
+                style: TextStyle(
+                    color: ink, fontSize: 16, fontWeight: FontWeight.w600))
+          ]),
+          const SizedBox(height: 10),
+          ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(store.syncConfig?.isValid == true ? '已配置' : '尚未配置',
+                  style: const TextStyle(color: ink, fontSize: 13)),
+              subtitle: Text(
+                  store.syncConfig?.isValid == true
+                      ? '${store.syncConfig!.url}\n${store.syncMessage ?? '可在多个设备间同步数据'}'
+                      : '配置 WebDAV 地址、账号、远程路径和自动同步间隔',
+                  style: const TextStyle(color: muted, fontSize: 12)),
+              trailing: TextButton(
+                  onPressed: () => _configureSync(context),
+                  child: const Text('配置'))),
+          const Divider(height: 1),
+          const SizedBox(height: 12),
+          Wrap(spacing: 10, runSpacing: 10, children: [
+            FilledButton.icon(
+                onPressed: store.syncBusy ? null : () => _syncNow(context),
+                icon: const Icon(Icons.sync, size: 17),
+                label: Text(store.syncBusy ? '同步中…' : '立即同步')),
+            OutlinedButton.icon(
+                onPressed:
+                    store.backupCheckBusy ? null : () => _loadBackups(context),
+                icon: const Icon(Icons.history, size: 17),
+                label: Text(store.backupCheckBusy ? '读取中…' : '远程备份'))
+          ]),
+          if (store.remoteBackups.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            const Divider(height: 1),
+            ...store.remoteBackups.map((backup) => ListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                leading:
+                    const Icon(Icons.backup_outlined, size: 18, color: muted),
+                title: Text(backup.name, style: const TextStyle(fontSize: 12)),
+                subtitle: Text(backup.modifiedAt?.toLocal().toString() ?? '',
+                    style: const TextStyle(fontSize: 11, color: muted)),
+                trailing: TextButton(
+                    onPressed:
+                        store.syncBusy ? null : () => _restore(context, backup),
+                    child: const Text('恢复'))))
+          ]
+        ]))
+      ]));
+
+  Future<void> _export(BuildContext context) async {
+    final ok = await store.exportBackup();
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(ok ? '备份已导出' : '已取消导出')));
+    }
+  }
+
+  Future<void> _import(BuildContext context) async {
+    try {
+      final ok = await store.importBackup();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(ok ? '备份已恢复' : '已取消恢复')));
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('备份文件格式无法读取')));
+      }
+    }
+  }
+
+  Future<void> _syncNow(BuildContext context) async {
+    await store.syncNow();
+    if (context.mounted && store.syncMessage != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(store.syncMessage!)));
+    }
+  }
+
+  Future<void> _loadBackups(BuildContext context) async {
+    await store.loadRemoteBackups();
+    if (context.mounted && store.syncMessage != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(store.syncMessage!)));
+    }
+  }
+
+  Future<void> _restore(BuildContext context, RemoteBackup backup) async {
+    final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+              title: const Text('恢复远程备份'),
+              content: Text('将用 ${backup.name} 覆盖当前本地数据，确定继续吗？'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('取消')),
+                FilledButton(
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    child: const Text('恢复'))
+              ],
+            ));
+    if (confirmed == true) await store.restoreRemoteBackup(backup);
+  }
+
+  Future<void> _configureSync(BuildContext context) async {
+    final config = store.syncConfig;
+    final url = TextEditingController(
+        text: config?.url ?? 'https://dav.jianguoyun.com/dav/');
+    final username = TextEditingController(text: config?.username ?? '');
+    final password = TextEditingController(text: config?.password ?? '');
+    final remotePath = TextEditingController(
+        text: config?.remotePath ?? defaultWebDavBackupPath);
+    var autoMinutes = config?.autoSyncMinutes ?? 0;
+    final saved = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+            builder: (context, setState) => AlertDialog(
+                  title: const Text('WebDAV 同步配置'),
+                  content: SizedBox(
+                      width: 480,
+                      child: SingleChildScrollView(
+                          child: Column(children: [
+                        TextField(
+                            controller: url,
+                            decoration:
+                                const InputDecoration(labelText: 'WebDAV 地址')),
+                        const SizedBox(height: 10),
+                        TextField(
+                            controller: username,
+                            decoration: const InputDecoration(labelText: '账号')),
+                        const SizedBox(height: 10),
+                        TextField(
+                            controller: password,
+                            obscureText: true,
+                            decoration:
+                                const InputDecoration(labelText: '密码 / 应用密码')),
+                        const SizedBox(height: 10),
+                        TextField(
+                            controller: remotePath,
+                            decoration:
+                                const InputDecoration(labelText: '远程备份路径')),
+                        const SizedBox(height: 10),
+                        _LabeledFilterDropdown<int>(
+                            label: '自动同步间隔',
+                            value: autoMinutes,
+                            values: const [0, 5, 15, 30, 60],
+                            width: 480,
+                            itemLabel: (value) =>
+                                value == 0 ? '关闭' : '每 $value 分钟',
+                            onChanged: (value) =>
+                                setState(() => autoMinutes = value ?? 0))
+                      ]))),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(dialogContext, false),
+                        child: const Text('取消')),
+                    FilledButton(
+                        onPressed: () => Navigator.pop(dialogContext, true),
+                        child: const Text('保存'))
+                  ],
+                )));
+    if (saved == true) {
+      await store.saveSyncConfig(SyncConfig(
+          url: url.text,
+          username: username.text,
+          password: password.text,
+          remotePath: remotePath.text,
+          autoSyncMinutes: autoMinutes));
+    }
+    url.dispose();
+    username.dispose();
+    password.dispose();
+    remotePath.dispose();
+  }
+}
+
+class MetricCard extends StatelessWidget {
+  const MetricCard(
+      {required this.label,
+      required this.value,
+      required this.accent,
+      required this.icon,
+      this.width,
+      this.height,
+      this.onTap,
+      super.key});
+  final String label, value;
+  final Color accent;
+  final IconData icon;
+  final double? width;
+  final double? height;
+  final VoidCallback? onTap;
+  @override
+  Widget build(BuildContext context) => SizedBox(
+      width: width ?? 180,
+      height: height,
+      child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: CardShell(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Icon(icon, color: accent, size: 18),
+                      const Spacer(),
+                      Text(label,
+                          style: const TextStyle(color: muted, fontSize: 12))
+                    ]),
+                    const SizedBox(height: 14),
+                    Text(value,
+                        style: TextStyle(
+                            color: accent,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800))
+                  ]))));
+}
+
+class CardShell extends StatelessWidget {
+  const CardShell(
+      {required this.child,
+      super.key,
+      this.padding = const EdgeInsets.all(18)});
+  final Widget child;
+  final EdgeInsets padding;
+  @override
+  Widget build(BuildContext context) => Container(
+      padding: padding,
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: line)),
+      child: child);
+}
+
+class InfoItem extends StatelessWidget {
+  const InfoItem({required this.label, required this.value, super.key});
+  final String label, value;
+  @override
+  Widget build(BuildContext context) => SizedBox(
+      width: 116,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: const TextStyle(color: muted, fontSize: 11)),
+        const SizedBox(height: 5),
+        Text(value,
+            style: const TextStyle(color: ink, fontWeight: FontWeight.w800))
+      ]));
+}
+
+class RankBadge extends StatelessWidget {
+  const RankBadge({required this.rank, this.plain = false, super.key});
+  final int rank;
+  final bool plain;
+  @override
+  Widget build(BuildContext context) {
+    final color = rank >= 10
+        ? teal
+        : rank >= 9
+            ? purple
+            : rank > 0
+                ? gold
+                : muted;
+    if (plain) {
+      return Text(rank == 0 ? '未学' : '$rank 重',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+              color: color, fontWeight: FontWeight.w700, fontSize: 12));
+    }
+    return Container(
+        width: 58,
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        decoration: BoxDecoration(
+            color: color.withOpacity(.11),
+            borderRadius: BorderRadius.circular(7)),
+        child: Text(rank == 0 ? '未学' : '$rank重',
+            style: TextStyle(
+                color: color, fontWeight: FontWeight.w800, fontSize: 12)));
+  }
+}
+
+class StatPill extends StatelessWidget {
+  const StatPill({required this.label, super.key});
+  final String label;
+  @override
+  Widget build(BuildContext context) => Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+          color: const Color(0xfff7f9f8),
+          borderRadius: BorderRadius.circular(7)),
+      child: Text(label,
+          style: const TextStyle(
+              color: muted, fontSize: 11, fontWeight: FontWeight.w700)));
+}
+
+class SkillChip extends StatelessWidget {
+  const SkillChip(
+      {required this.name,
+      required this.onTap,
+      this.purple = false,
+      super.key});
+  final String name;
+  final VoidCallback onTap;
+  final bool purple;
+  @override
+  Widget build(BuildContext context) => InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+              color: purple ? const Color(0xfff4edfb) : const Color(0xfff7f9f8),
+              borderRadius: BorderRadius.circular(8),
+              border:
+                  Border.all(color: purple ? const Color(0xffdec9f2) : line)),
+          child: Text(name,
+              style: TextStyle(
+                  color: purple ? purpleColor : ink,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600))));
+}
+
+const purpleColor = Color(0xff8d54c7);
+String formatNumber(num value) => value
+    .round()
+    .toString()
+    .replaceAllMapped(RegExp(r'(?<=\d)(?=(\d{3})+$)'), (match) => ',');
+
+Future<void> showSkillDialog(
+    BuildContext context, SkillStore store, Skill skill,
+    {bool allowNameEdit = false}) async {
+  final nameController = TextEditingController(text: skill.name);
+  final current = store.level(store.selectedCharacterId, skill.id);
+  var selectedLevel = current;
+  var tradable = skill.tradable;
+  await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+                  title: Text(allowNameEdit ? '编辑技能' : skill.name),
+                  content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (allowNameEdit) ...[
+                          TextField(
+                              controller: nameController,
+                              decoration:
+                                  const InputDecoration(labelText: '技能名称')),
+                          const SizedBox(height: 12)
+                        ],
+                        Text(store.bossForSkill(skill.id)?.name ?? '技能',
+                            style: const TextStyle(color: muted, fontSize: 12)),
+                        const SizedBox(height: 14),
+                        Row(children: [
+                          Text(allowNameEdit ? '统一重数' : '当前重数',
+                              style: const TextStyle(
+                                  fontSize: 13, fontWeight: FontWeight.w400)),
+                          const Spacer(),
+                          _FilterDropdown<int>(
+                              value: selectedLevel,
+                              values: [
+                                ...List.generate(10, (index) => 10 - index),
+                                0
+                              ],
+                              itemLabel: (value) =>
+                                  value == 0 ? '未学习' : '$value 重',
+                              width: 112,
+                              onChanged: (value) => setState(
+                                  () => selectedLevel = value ?? selectedLevel))
+                        ]),
+                        if (allowNameEdit) ...[
+                          const SizedBox(height: 10),
+                          CheckboxListTile(
+                              contentPadding: EdgeInsets.zero,
+                              dense: true,
+                              value: tradable,
+                              title: const Text('可交易技能',
+                                  style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w400)),
+                              subtitle: const Text('紫色显示并进入紫书统计',
+                                  style: TextStyle(color: muted, fontSize: 11)),
+                              onChanged: (value) =>
+                                  setState(() => tradable = value ?? false)),
+                        ] else ...[
+                          const SizedBox(height: 12),
+                          const Text('名称、可交易状态和删除请前往 Boss 技能管理。',
+                              style: TextStyle(color: muted, fontSize: 11))
+                        ],
+                      ]),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('取消')),
+                    if (allowNameEdit)
+                      TextButton(
+                          onPressed: () {
+                            final boss = store.bossForSkill(skill.id);
+                            if (boss != null) {
+                              store.removeSkillFromBoss(boss, skill);
+                            }
+                            Navigator.pop(context);
+                          },
+                          child: const Text('删除技能',
+                              style: TextStyle(color: Colors.redAccent))),
+                    FilledButton(
+                        onPressed: () {
+                          if (allowNameEdit) {
+                            store.renameSkill(skill, nameController.text);
+                            store.setSkillTradable(skill, tradable);
+                            store.setLevelForAllCharacters(
+                                skill.id, selectedLevel);
+                          } else {
+                            store.setLevel(skill.id, selectedLevel);
+                          }
+                          Navigator.pop(context);
+                        },
+                        child: const Text('保存'))
+                  ])));
+  nameController.dispose();
+}
+
+Future<void> showImportantDialog(BuildContext context, SkillStore store) async {
+  final skillNames = store.bosses
+      .expand((boss) => boss.skills)
+      .map((skill) => skill.name)
+      .toSet()
+      .toList()
+    ..sort();
+  final controller = TextEditingController();
+  String? errorText;
+  await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+                  title: const Text('添加重要技能'),
+                  content: skillNames.isEmpty
+                      ? const Text('暂无已有技能，请先在 Boss 管理中录入技能。')
+                      : Column(mainAxisSize: MainAxisSize.min, children: [
+                          _NameAutocomplete(
+                              controller: controller,
+                              names: skillNames,
+                              width: math.min(
+                                  300.0, MediaQuery.sizeOf(context).width - 96),
+                              hint: '从已有技能中搜索技能',
+                              compactHint: '搜索已有技能'),
+                          if (errorText != null) ...[
+                            const SizedBox(height: 8),
+                            Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(errorText!,
+                                    style: const TextStyle(
+                                        color: Colors.redAccent, fontSize: 12)))
+                          ]
+                        ]),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('取消')),
+                    FilledButton(
+                        onPressed: skillNames.isEmpty
+                            ? null
+                            : () {
+                                final name = controller.text.trim();
+                                if (!skillNames.contains(name)) {
+                                  setState(() => errorText = '请选择已有技能');
+                                  return;
+                                }
+                                if (store.importantSkills.contains(name)) {
+                                  setState(() => errorText = '该技能已经添加');
+                                  return;
+                                }
+                                store.addImportantSkill(name);
+                                Navigator.pop(context);
+                              },
+                        child: const Text('添加'))
+                  ])));
+  controller.dispose();
+}
+
+Future<void> showAddSkillDialog(
+    BuildContext context, SkillStore store, Boss boss) async {
+  final controller = TextEditingController();
+  var tradable = false;
+  await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+                  title: Text('给 ${boss.name} 添加技能'),
+                  content: Column(mainAxisSize: MainAxisSize.min, children: [
+                    TextField(
+                        controller: controller,
+                        autofocus: true,
+                        decoration: const InputDecoration(labelText: '技能名称')),
+                    const SizedBox(height: 10),
+                    CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: tradable,
+                        title: const Text('可交易技能'),
+                        subtitle: const Text('默认关闭，开启后会进入紫书统计'),
+                        onChanged: (value) =>
+                            setState(() => tradable = value ?? false))
+                  ]),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('取消')),
+                    FilledButton(
+                        onPressed: () {
+                          store.addSkillToBoss(boss, controller.text,
+                              tradable: tradable);
+                          Navigator.pop(context);
+                        },
+                        child: const Text('保存'))
+                  ])));
+}
+
+Future<void> showBossDialog(BuildContext context, SkillStore store,
+    {Boss? boss}) async {
+  await showDialog<void>(
+      context: context,
+      builder: (context) => _BossEditorDialog(store: store, boss: boss));
+}
+
+class _BossEditorDialog extends StatefulWidget {
+  const _BossEditorDialog({required this.store, this.boss});
+  final SkillStore store;
+  final Boss? boss;
+
+  @override
+  State<_BossEditorDialog> createState() => _BossEditorDialogState();
+}
+
+class _BossEditorDialogState extends State<_BossEditorDialog> {
+  late final TextEditingController name;
+  late final TextEditingController spirit;
+  late final TextEditingController stamina;
+  late final List<SkillDraftController> skillDrafts;
+  late String bossType;
+  String? attributeError;
+
+  @override
+  void initState() {
+    super.initState();
+    final boss = widget.boss;
+    name = TextEditingController(text: boss?.name ?? '');
+    bossType = boss?.type ?? '普通';
+    spirit = TextEditingController(
+        text: boss == null ? '0' : boss.spirit.round().toString());
+    stamina = TextEditingController(
+        text: boss == null ? '0' : boss.stamina.round().toString());
+    skillDrafts = boss == null
+        ? [SkillDraftController()]
+        : boss.skills
+            .map((skill) =>
+                SkillDraftController(skill.name)..tradable = skill.tradable)
+            .toList();
+  }
+
+  @override
+  void dispose() {
+    name.dispose();
+    spirit.dispose();
+    stamina.dispose();
+    for (final draft in skillDrafts) {
+      draft.dispose();
+    }
+    super.dispose();
+  }
+
+  void _save() {
+    final boss = widget.boss;
+    final nextName = name.text.trim();
+    final nextSpirit = int.tryParse(spirit.text);
+    final nextStamina = int.tryParse(stamina.text);
+    if (nextSpirit == null ||
+        nextStamina == null ||
+        nextSpirit + nextStamina != 800) {
+      setState(() => attributeError = '精神提升与耐力提升相加必须等于 800');
+      return;
+    }
+    if (boss == null) {
+      widget.store.addBoss(
+          name: nextName,
+          type: bossType,
+          spirit: nextSpirit.toDouble(),
+          stamina: nextStamina.toDouble(),
+          skillInputs: skillDrafts
+              .map((draft) => SkillInputData(
+                  name: draft.controller.text, tradable: draft.tradable))
+              .toList());
+    } else {
+      widget.store.updateBoss(boss,
+          name: nextName,
+          type: bossType,
+          spirit: nextSpirit.toDouble(),
+          stamina: nextStamina.toDouble());
+    }
+    Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final boss = widget.boss;
+    return AlertDialog(
+        title: Text(boss == null ? '录入新 Boss' : '编辑 Boss'),
+        content: SizedBox(
+            width: 560,
+            child: SingleChildScrollView(
+                child: Column(children: [
+              TextField(
+                  controller: name,
+                  decoration: const InputDecoration(labelText: 'Boss 名称')),
+              const SizedBox(height: 12),
+              Align(
+                  alignment: Alignment.centerLeft,
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Boss 类型',
+                            style: TextStyle(color: muted, fontSize: 12)),
+                        const SizedBox(height: 5),
+                        _FilterDropdown<String>(
+                            value: bossType,
+                            values: bossTypeOptions,
+                            itemLabel: (value) => value,
+                            width: 160,
+                            onChanged: (value) =>
+                                setState(() => bossType = value ?? bossType))
+                      ])),
+              const SizedBox(height: 12),
+              Row(children: [
+                Expanded(
+                    child: TextField(
+                        controller: spirit,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly
+                        ],
+                        onChanged: (_) => setState(() => attributeError = null),
+                        decoration: const InputDecoration(labelText: '精神提升'))),
+                const SizedBox(width: 10),
+                Expanded(
+                    child: TextField(
+                        controller: stamina,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly
+                        ],
+                        onChanged: (_) => setState(() => attributeError = null),
+                        decoration: const InputDecoration(labelText: '耐力提升')))
+              ]),
+              if (attributeError != null) ...[
+                const SizedBox(height: 7),
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(attributeError!,
+                        style: const TextStyle(
+                            color: Colors.redAccent, fontSize: 12)))
+              ],
+              if (boss == null) ...[
+                const SizedBox(height: 17),
+                Row(children: [
+                  const Expanded(
+                      child: Text('相关技能',
+                          style: TextStyle(
+                              color: ink, fontWeight: FontWeight.w800))),
+                  TextButton.icon(
+                      onPressed: () => setState(
+                          () => skillDrafts.add(SkillDraftController())),
+                      icon: const Icon(Icons.add, size: 17),
+                      label: const Text('添加一条'))
+                ]),
+                const SizedBox(height: 4),
+                ...skillDrafts.asMap().entries.map((entry) {
+                  final draft = entry.value;
+                  return Padding(
+                      padding: const EdgeInsets.only(bottom: 9),
+                      child: Row(children: [
+                        Expanded(
+                            child: TextField(
+                                controller: draft.controller,
+                                decoration: InputDecoration(
+                                    labelText: '技能名称 ${entry.key + 1}'))),
+                        const SizedBox(width: 6),
+                        Tooltip(
+                            message: '默认不可交易',
+                            child:
+                                Row(mainAxisSize: MainAxisSize.min, children: [
+                              Checkbox(
+                                  value: draft.tradable,
+                                  activeColor: purple,
+                                  onChanged: (value) => setState(
+                                      () => draft.tradable = value ?? false)),
+                              const Text('可交易', style: TextStyle(fontSize: 12))
+                            ])),
+                        IconButton(
+                            tooltip: '删除这一条',
+                            onPressed: skillDrafts.length == 1
+                                ? null
+                                : () => setState(() {
+                                      final removed =
+                                          skillDrafts.removeAt(entry.key);
+                                      removed.dispose();
+                                    }),
+                            icon: const Icon(Icons.remove_circle_outline,
+                                color: muted))
+                      ]));
+                })
+              ] else
+                const Padding(
+                    padding: EdgeInsets.only(top: 16),
+                    child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text('技能可在 Boss 卡片中点击后编辑、删除或新增。',
+                            style: TextStyle(color: muted, fontSize: 12))))
+            ]))),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          FilledButton(
+              onPressed: _save,
+              child: Text(boss == null ? '保存并同步角色' : '保存 Boss'))
+        ]);
+  }
+}
+
+Future<void> showDeleteBossDialog(
+    BuildContext context, SkillStore store, Boss boss) async {
+  await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+              title: const Text('删除 Boss'),
+              content: Text('确定删除「${boss.name}」及其全部技能吗？相关角色的重数也会一并删除。'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('取消')),
+                FilledButton(
+                    style: FilledButton.styleFrom(
+                        backgroundColor: Colors.redAccent),
+                    onPressed: () {
+                      store.removeBoss(boss);
+                      Navigator.pop(context);
+                    },
+                    child: const Text('删除'))
+              ]));
+}
+
+Future<void> showCharacterDialog(BuildContext context, SkillStore store,
+    {CharacterData? character}) async {
+  final name = TextEditingController(text: character?.name ?? '');
+  var gender = character?.gender ?? '女性';
+  var school = character?.school ?? '未设置';
+  var mind = character?.mind ?? '未设置';
+  var position = character?.position ?? 'dps';
+  var initialSkillLevel = 1;
+  final importedLevels = <String, int>{};
+  await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+                  scrollable: true,
+                  title: Text(character == null ? '新增角色' : '编辑角色'),
+                  content: SizedBox(
+                      width: 440,
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        TextField(
+                            controller: name,
+                            decoration:
+                                const InputDecoration(labelText: '角色名称')),
+                        const SizedBox(height: 12),
+                        Wrap(spacing: 10, runSpacing: 12, children: [
+                          _LabeledFilterDropdown<String>(
+                              label: '角色性别',
+                              value: gender,
+                              values: const ['女性', '男性'],
+                              width: 215,
+                              itemLabel: (value) => value,
+                              onChanged: (value) =>
+                                  setState(() => gender = value ?? gender)),
+                          _LabeledFilterDropdown<String>(
+                              label: '门派',
+                              value: school,
+                              values: schoolOptions,
+                              width: 215,
+                              itemLabel: (value) => value,
+                              onChanged: (value) =>
+                                  setState(() => school = value ?? school)),
+                          _LabeledFilterDropdown<String>(
+                              label: '心法',
+                              value: mind,
+                              values: mindOptions,
+                              width: 215,
+                              itemLabel: (value) => value,
+                              onChanged: (value) =>
+                                  setState(() => mind = value ?? mind)),
+                          _LabeledFilterDropdown<String>(
+                              label: '定位',
+                              value: position,
+                              values: positionOptions,
+                              width: 215,
+                              itemLabel: (value) => value,
+                              onChanged: (value) =>
+                                  setState(() => position = value ?? position)),
+                          if (character == null)
+                            _LabeledFilterDropdown<int>(
+                                label: '全部技能重数',
+                                value: initialSkillLevel,
+                                values:
+                                    List.generate(10, (index) => 10 - index),
+                                width: 215,
+                                itemLabel: (value) => '$value 重',
+                                onChanged: (value) => setState(() =>
+                                    initialSkillLevel =
+                                        value ?? initialSkillLevel))
+                        ]),
+                        if (character == null) ...[
+                          const SizedBox(height: 14),
+                          Row(children: [
+                            Expanded(
+                                child: OutlinedButton.icon(
+                                    onPressed: () async {
+                                      try {
+                                        final data =
+                                            await pickCharacterExcelData();
+                                        if (data == null) return;
+                                        setState(() {
+                                          name.text = data.name;
+                                          gender = data.gender;
+                                          importedLevels
+                                            ..clear()
+                                            ..addAll(normalizeGenderSkillLevels(
+                                                store,
+                                                data.gender,
+                                                data.skillLevels));
+                                        });
+                                        if (context.mounted) {
+                                          await showCharacterDraftPreview(
+                                              context,
+                                              store,
+                                              importedLevels,
+                                              initialSkillLevel,
+                                              gender);
+                                        }
+                                      } on FormatException catch (error) {
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(SnackBar(
+                                                  content:
+                                                      Text(error.message)));
+                                        }
+                                      } catch (_) {
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(const SnackBar(
+                                                  content: Text(
+                                                      'Excel 导入失败，请确认文件格式')));
+                                        }
+                                      }
+                                    },
+                                    icon: const Icon(Icons.upload_file_outlined,
+                                        size: 17),
+                                    label: const Text('导入 Excel'))),
+                            const SizedBox(width: 10),
+                            Expanded(
+                                child: OutlinedButton.icon(
+                                    onPressed: () async {
+                                      try {
+                                        final levels =
+                                            await pickCharacterImageLevels(
+                                                store, gender);
+                                        if (levels == null) return;
+                                        setState(() {
+                                          importedLevels
+                                            ..clear()
+                                            ..addAll(levels);
+                                        });
+                                        if (context.mounted) {
+                                          await showCharacterDraftPreview(
+                                              context,
+                                              store,
+                                              importedLevels,
+                                              initialSkillLevel,
+                                              gender);
+                                        }
+                                      } catch (error) {
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(SnackBar(
+                                                  content: Text(error
+                                                      .toString()
+                                                      .replaceFirst(
+                                                          'FormatException: ',
+                                                          ''))));
+                                        }
+                                      }
+                                    },
+                                    icon: const Icon(Icons.image_outlined,
+                                        size: 17),
+                                    label: const Text('导入图片')))
+                          ]),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                              width: double.infinity,
+                              child: TextButton.icon(
+                                  onPressed: () => showCharacterDraftPreview(
+                                      context,
+                                      store,
+                                      importedLevels,
+                                      initialSkillLevel,
+                                      gender),
+                                  icon: const Icon(Icons.preview_outlined,
+                                      size: 17),
+                                  label: const Text('预览技能与属性')))
+                        ],
+                        const SizedBox(height: 12),
+                        const Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text('精神值和耐力值会根据技能重数自动计算，无需手动录入。',
+                                style: TextStyle(color: muted, fontSize: 12)))
+                      ])),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('取消')),
+                    FilledButton(
+                        onPressed: () {
+                          if (character == null) {
+                            store.addCharacter(
+                                name: name.text,
+                                gender: gender,
+                                school: school,
+                                mind: mind,
+                                position: position,
+                                initialSkillLevel: initialSkillLevel,
+                                skillLevelsByName: importedLevels);
+                          } else {
+                            store.updateCharacter(character,
+                                name: name.text,
+                                gender: gender,
+                                school: school,
+                                mind: mind,
+                                position: position);
+                          }
+                          Navigator.pop(context);
+                        },
+                        child: const Text('保存'))
+                  ])));
+  name.dispose();
+}
+
+Future<CharacterExcelData?> pickCharacterExcelData() async {
+  try {
+    final picked = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['xlsx'],
+        withData: true);
+    if (picked == null) return null;
+    final file = picked.files.single;
+    final bytes = file.bytes ??
+        (file.path == null ? null : await File(file.path!).readAsBytes());
+    if (bytes == null) throw const FormatException('无法读取 Excel 文件');
+    return CharacterExcelParser.parse(bytes);
+  } catch (_) {
+    rethrow;
+  }
+}
+
+Future<Map<String, int>?> pickCharacterImageLevels(
+    SkillStore store, String gender) async {
+  final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['png', 'jpg', 'jpeg', 'webp']);
+  if (picked == null) return null;
+  final path = picked.files.single.path;
+  if (path == null) throw const FormatException('无法读取图片');
+  if (!Platform.isMacOS) {
+    throw const FormatException('当前图片识别暂时仅支持 macOS');
+  }
+  const channel = MethodChannel('baizhan_skill/ocr');
+  final raw = await channel
+          .invokeListMethod<dynamic>('recognizeText', {'path': path}) ??
+      const [];
+  final rankHeaders = {
+    '十重': 10,
+    '九重': 9,
+    '八重': 8,
+    '七重': 7,
+    '六重': 6,
+    '五重': 5,
+    '四重': 4,
+    '三重': 3,
+    '二重': 2,
+    '一重': 1
+  };
+  final knownSkills = store.bosses.expand((boss) => boss.skills).toList();
+  final levels = <String, int>{};
+  var currentRank = 0;
+  String normalize(String value) =>
+      value.replaceAll(RegExp(r'[^\u3400-\u9fffA-Za-z0-9]'), '');
+  for (final item in raw) {
+    if (item is! Map) continue;
+    final text = item['text']?.toString() ?? '';
+    final normalizedText = normalize(text);
+    final header = rankHeaders.entries
+        .where((entry) => normalizedText.contains(entry.key))
+        .firstOrNull;
+    if (header != null) {
+      currentRank = header.value;
+      continue;
+    }
+    if (currentRank == 0) continue;
+    for (final skill in knownSkills) {
+      final skillName = skillNameForGender(skill, gender);
+      final normalizedName = normalize(skillName);
+      if (normalizedText.contains(normalizedName) ||
+          normalizedName.contains(normalizedText) &&
+              normalizedText.length >= 3) {
+        levels[skill.name] = currentRank;
+      }
+    }
+  }
+  if (levels.isEmpty) {
+    throw const FormatException('没有从图片中识别到现有技能，请确认图片清晰且包含重数标题');
+  }
+  return levels;
+}
+
+Future<void> showCharacterDraftPreview(BuildContext context, SkillStore store,
+    Map<String, int> overrides, int defaultLevel, String gender) async {
+  await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(builder: (context, setState) {
+            int levelFor(Skill skill) =>
+                (overrides[skill.name] ?? defaultLevel).clamp(1, 10).toInt();
+            int rankFor(Boss boss) => boss.skills.isEmpty
+                ? 0
+                : boss.skills
+                    .where((skill) => skillAppliesToGender(skill, gender))
+                    .map(levelFor)
+                    .reduce((left, right) => math.min(left, right));
+            const multipliers = [0, 1, 2, 3, 4, 5, 7, 10, 15, 22.5, 33.75];
+            final allLevels = store.bosses
+                .expand((boss) => boss.skills)
+                .where((skill) => skillAppliesToGender(skill, gender))
+                .map(levelFor)
+                .toList();
+            double threshold = 0;
+            const bonuses = [
+              0,
+              100,
+              200,
+              300,
+              400,
+              2000,
+              6000,
+              8000,
+              10000,
+              12000,
+              14000
+            ];
+            for (var rank = 1; rank <= 10; rank++) {
+              if (allLevels.where((level) => level >= rank).length > 2) {
+                threshold += bonuses[rank];
+              }
+            }
+            double stat(bool spirit) =>
+                10000 +
+                threshold +
+                store.bosses.fold<double>(0, (sum, boss) {
+                  final base = bossStatForGender(boss, gender, spirit);
+                  return sum + base * multipliers[rankFor(boss)];
+                });
+            return AlertDialog(
+                title: const Text('角色技能预览'),
+                content: SizedBox(
+                    width: 620,
+                    height: 620,
+                    child: Column(children: [
+                      Row(children: [
+                        Expanded(
+                            child: MetricCard(
+                                width: double.infinity,
+                                label: '精神值',
+                                value: formatNumber(stat(true)),
+                                accent: teal,
+                                icon: Icons.bolt)),
+                        const SizedBox(width: 10),
+                        Expanded(
+                            child: MetricCard(
+                                width: double.infinity,
+                                label: '耐力值',
+                                value: formatNumber(stat(false)),
+                                accent: const Color(0xff69a991),
+                                icon: Icons.shield_outlined))
+                      ]),
+                      const SizedBox(height: 12),
+                      const Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text('Boss / 技能重数',
+                              style: TextStyle(
+                                  color: ink, fontWeight: FontWeight.w700))),
+                      const SizedBox(height: 6),
+                      Expanded(
+                          child: ListView(
+                              children: store.bosses
+                                  .map((boss) => ExpansionTile(
+                                      initiallyExpanded: false,
+                                      tilePadding: const EdgeInsets.symmetric(
+                                          horizontal: 8),
+                                      title: Text(
+                                          bossNameForGender(boss, gender),
+                                          style: const TextStyle(
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w700)),
+                                      subtitle: Text('${rankFor(boss)} 重',
+                                          style: const TextStyle(
+                                              color: teal,
+                                              fontWeight: FontWeight.w700)),
+                                      children: boss.skills
+                                          .where((skill) =>
+                                              skillAppliesToGender(
+                                                  skill, gender))
+                                          .map((skill) => Padding(
+                                              padding:
+                                                  const EdgeInsets.fromLTRB(
+                                                      24, 4, 8, 4),
+                                              child: Row(children: [
+                                                Expanded(
+                                                    child: Text(
+                                                        skillNameForGender(
+                                                            skill, gender),
+                                                        style: const TextStyle(
+                                                            fontSize: 12))),
+                                                _FilterDropdown<int>(
+                                                    value: levelFor(skill),
+                                                    values: List.generate(10,
+                                                        (index) => 10 - index),
+                                                    itemLabel: (value) =>
+                                                        '$value 重',
+                                                    width: 104,
+                                                    onChanged: (value) {
+                                                      if (value == null) return;
+                                                      setState(() => overrides[
+                                                          skill.name] = value);
+                                                    })
+                                              ])))
+                                          .toList()))
+                                  .toList()))
+                    ])),
+                actions: [
+                  FilledButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('关闭预览'))
+                ]);
+          }));
+}
+
+Future<void> showDeleteCharacterDialog(
+    BuildContext context, SkillStore store, CharacterData character) async {
+  await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+              title: const Text('删除角色'),
+              content: Text('确定删除「${character.name}」吗？该角色的技能重数也会一并删除。'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('取消')),
+                FilledButton(
+                    style: FilledButton.styleFrom(
+                        backgroundColor: Colors.redAccent),
+                    onPressed: () {
+                      store.removeCharacter(character);
+                      Navigator.pop(context);
+                    },
+                    child: const Text('删除'))
+              ]));
+}
