@@ -3,6 +3,8 @@ name: Release Windows client
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
