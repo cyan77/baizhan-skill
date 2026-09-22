@@ -47,6 +47,13 @@ EncodableList RecognizeText(const std::string& path) {
       winrt::Windows::Graphics::Imaging::BitmapPixelFormat::Bgra8,
       winrt::Windows::Graphics::Imaging::BitmapAlphaMode::Premultiplied).get();
 
+  const auto max_dimension =
+      winrt::Windows::Media::Ocr::OcrEngine::MaxImageDimension();
+  if (bitmap.PixelWidth() > max_dimension ||
+      bitmap.PixelHeight() > max_dimension) {
+    throw std::runtime_error("图片尺寸过大，无法进行文字识别");
+  }
+
   auto engine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromLanguage(
       winrt::Windows::Globalization::Language(L"zh-Hans"));
   if (!engine) {
@@ -141,6 +148,8 @@ CreateOcrChannel(flutter::BinaryMessenger* messenger) {
                         EncodableValue(winrt::to_string(error.message())));
         } catch (const std::exception& error) {
           result->Error("ocr", error.what());
+        } catch (...) {
+          result->Error("ocr", "Windows 图片文字识别发生未知错误");
         }
       });
   return channel;

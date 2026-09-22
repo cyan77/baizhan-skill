@@ -5210,9 +5210,12 @@ Future<Map<String, int>?> pickCharacterImageLevels(
     final source = img.decodeImage(await File(path).readAsBytes());
     if (source != null) {
       final minimumWidthScale = source.width < 900 ? 900 / source.width : 1.0;
-      final maximumSizeScale = 3000 / math.max(source.width, source.height);
+      // Windows.Media.Ocr rejects images above its maximum dimension. Keep a
+      // safety margin below 2600 px; macOS uses the same prepared image so both
+      // platforms behave consistently.
+      final maximumSizeScale = 2400 / math.max(source.width, source.height);
       final scale = math.min(minimumWidthScale, maximumSizeScale);
-      var prepared = scale > 1.05
+      var prepared = (scale - 1).abs() > 0.05
           ? img.copyResize(source,
               width: (source.width * scale).round(),
               height: (source.height * scale).round(),
