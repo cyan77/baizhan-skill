@@ -68,6 +68,11 @@ void main() {
     await tester.pumpWidget(
         MaterialApp(home: Scaffold(body: AllSkillsPage(store: store))));
     await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.text('低进度首领')).dy,
+        lessThan(tester.getTopLeft(find.text('高进度首领')).dy));
+
+    await tester.tap(find.text('攻略进度'));
+    await tester.pumpAndSettle();
     expect(tester.getTopLeft(find.text('高进度首领')).dy,
         lessThan(tester.getTopLeft(find.text('低进度首领')).dy));
 

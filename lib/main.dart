@@ -3678,12 +3678,12 @@ class _AllSkillsTable extends StatefulWidget {
 
 class _AllSkillsTableState extends State<_AllSkillsTable> {
   final Set<String> _expandedBossIds = {};
-  bool _strategyDescending = true;
+  bool? _strategyDescending;
 
   List<Boss> get _sortedBosses {
     final bosses = [...widget.bosses];
     final character = widget.character;
-    if (character == null) return bosses;
+    if (character == null || _strategyDescending == null) return bosses;
     final originalOrder = <String, int>{
       for (var index = 0; index < bosses.length; index++)
         bosses[index].id: index
@@ -3703,7 +3703,7 @@ class _AllSkillsTableState extends State<_AllSkillsTable> {
         comparison = (originalOrder[left.id] ?? 0)
             .compareTo(originalOrder[right.id] ?? 0);
       }
-      return _strategyDescending ? -comparison : comparison;
+      return _strategyDescending! ? -comparison : comparison;
     });
     return bosses;
   }
@@ -3733,7 +3733,7 @@ class _AllSkillsTableState extends State<_AllSkillsTable> {
                               onTap: widget.character == null
                                   ? null
                                   : () => setState(() => _strategyDescending =
-                                      !_strategyDescending),
+                                      !(_strategyDescending ?? false)),
                               child: Row(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
@@ -3744,9 +3744,11 @@ class _AllSkillsTableState extends State<_AllSkillsTable> {
                                             fontWeight: FontWeight.w700)),
                                     const SizedBox(width: 2),
                                     Icon(
-                                        _strategyDescending
-                                            ? Icons.arrow_downward
-                                            : Icons.arrow_upward,
+                                        _strategyDescending == null
+                                            ? Icons.unfold_more
+                                            : _strategyDescending!
+                                                ? Icons.arrow_downward
+                                                : Icons.arrow_upward,
                                         size: 13,
                                         color: muted)
                                   ]))),
