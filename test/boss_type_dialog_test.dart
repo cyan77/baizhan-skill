@@ -364,7 +364,7 @@ void main() {
     expect(find.text('心法'), findsOneWidget);
     expect(find.text('定位'), findsOneWidget);
     expect(find.text('换将点'), findsOneWidget);
-    expect(find.text('本周 CD 已完成'), findsOneWidget);
+    expect(find.text('本周 CD'), findsOneWidget);
     expect(find.text('全部技能重数'), findsOneWidget);
     expect(find.text('导入 Excel'), findsOneWidget);
     expect(find.text('导入图片'), findsOneWidget);
@@ -648,8 +648,8 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1200, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: HomePage(store: store))));
+    await tester
+        .pumpWidget(MaterialApp(home: Scaffold(body: HomePage(store: store))));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('同步设置'));
 

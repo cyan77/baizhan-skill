@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
@@ -2617,8 +2618,8 @@ class _HomePageState extends State<HomePage> {
                         value: character.weeklyCompleted,
                         onChanged: (value) => store.setWeeklyCompleted(
                             character, value ?? false))),
-                Text(character.weeklyCompleted ? '本周 CD 已完成' : '本周 CD 未完成',
-                    style: const TextStyle(
+                const Text('本周 CD',
+                    style: TextStyle(
                         color: teal, fontWeight: FontWeight.w600, fontSize: 12))
               ])
           ])),
@@ -6065,14 +6066,32 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                                       errorText: swapPointsError))),
                           SizedBox(
                               width: 215,
-                              child: CheckboxListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  value: weeklyCompleted,
-                                  title: const Text('本周 CD 已完成'),
-                                  controlAffinity:
-                                      ListTileControlAffinity.leading,
-                                  onChanged: (value) => setState(
-                                      () => weeklyCompleted = value ?? false))),
+                              child: InkWell(
+                                  borderRadius: BorderRadius.circular(12),
+                                  onTap: () => setState(
+                                      () => weeklyCompleted = !weeklyCompleted),
+                                  child: Container(
+                                      height: 42,
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8),
+                                      decoration: BoxDecoration(
+                                          color: const Color(0xfff7f9f8),
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                          border: Border.all(color: line)),
+                                      child: Row(children: [
+                                        Checkbox(
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            value: weeklyCompleted,
+                                            onChanged: (value) => setState(() =>
+                                                weeklyCompleted =
+                                                    value ?? false)),
+                                        const SizedBox(width: 2),
+                                        const Text('本周 CD',
+                                            style: TextStyle(
+                                                color: ink, fontSize: 13))
+                                      ])))),
                           if (character == null)
                             _LabeledFilterDropdown<int>(
                                 label: '全部技能重数',
@@ -6300,20 +6319,24 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
 }
 
 Future<CharacterExcelData?> pickCharacterExcelData(int maxSkillRank) async {
-  try {
-    final picked = await FilePicker.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: const ['xlsx'],
-        withData: true);
-    if (picked == null) return null;
-    final file = picked.files.single;
-    final bytes = file.bytes ??
-        (file.path == null ? null : await File(file.path!).readAsBytes());
-    if (bytes == null) throw const FormatException('无法读取 Excel 文件');
-    return CharacterExcelParser.parse(bytes, maxSkillRank: maxSkillRank);
-  } catch (_) {
-    rethrow;
+  final picked = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['xlsx'],
+      withData: false);
+  if (picked == null) return null;
+  final file = picked.files.single;
+  final path = file.path;
+  if (path == null) throw const FormatException('无法读取 Excel 文件');
+  final source = File(path);
+  final size = await source.length();
+  if (size > 20 * 1024 * 1024) {
+    throw const FormatException('Excel 文件过大，请选择小于 20 MB 的角色技能表');
   }
+  final bytes = await source.readAsBytes();
+  return Isolate.run(
+          () => CharacterExcelParser.parse(bytes, maxSkillRank: maxSkillRank))
+      .timeout(const Duration(seconds: 20),
+          onTimeout: () => throw const FormatException('Excel 解析超时，请检查文件是否损坏'));
 }
 
 Future<Map<String, int>?> pickCharacterImageLevels(
@@ -6329,35 +6352,32 @@ Future<Map<String, int>?> pickCharacterImageLevels(
   }
   String ocrPath = path;
   Directory? temporaryDirectory;
-  try {
-    final source = img.decodeImage(await File(path).readAsBytes());
-    if (source != null) {
-      final minimumWidthScale = source.width < 900 ? 900 / source.width : 1.0;
-      // Windows.Media.Ocr rejects images above its maximum dimension. Keep a
-      // safety margin below 2600 px; macOS uses the same prepared image so both
-      // platforms behave consistently.
-      final maximumSizeScale = 2400 / math.max(source.width, source.height);
-      final scale = math.min(minimumWidthScale, maximumSizeScale);
-      var prepared = (scale - 1).abs() > 0.05
-          ? img.copyResize(source,
-              width: (source.width * scale).round(),
-              height: (source.height * scale).round(),
-              interpolation: img.Interpolation.cubic)
-          : source;
-      prepared = img.adjustColor(prepared, contrast: 1.35, saturation: 0.35);
-      temporaryDirectory =
-          await Directory.systemTemp.createTemp('baizhan_skill_ocr_');
-      ocrPath = '${temporaryDirectory.path}/prepared.png';
-      await File(ocrPath).writeAsBytes(img.encodePng(prepared));
+  final imageSize = await File(path).length();
+  if (imageSize > 25 * 1024 * 1024) {
+    throw const FormatException('图片文件过大，请选择小于 25 MB 的截图');
+  }
+  // Windows uses its native decoder directly. Decoding and resizing a large
+  // screenshot in Dart can temporarily allocate hundreds of MB and previously
+  // caused the desktop process to become unresponsive or exit.
+  if (Platform.isMacOS) {
+    try {
+      final prepared = await Isolate.run(() => _prepareOcrImage(path));
+      if (prepared != null) {
+        ocrPath = prepared;
+        temporaryDirectory = File(prepared).parent;
+      }
+    } catch (_) {
+      // Native OCR can still try the original image when preprocessing fails.
     }
-  } catch (_) {
-    // OCR can still try the original when preprocessing cannot decode an image.
   }
   const channel = MethodChannel('baizhan_skill/ocr');
   final List<dynamic> raw;
   try {
-    raw = await channel
-            .invokeListMethod<dynamic>('recognizeText', {'path': ocrPath}) ??
+    raw = await channel.invokeListMethod<dynamic>('recognizeText', {
+          'path': ocrPath
+        }).timeout(const Duration(seconds: 45),
+            onTimeout: () => throw const FormatException(
+                '图片识别超时，请裁剪图片后重试，并确认系统已安装简体中文 OCR')) ??
         const [];
   } finally {
     if (temporaryDirectory != null) {
@@ -6367,6 +6387,25 @@ Future<Map<String, int>?> pickCharacterImageLevels(
     }
   }
   return parseCharacterImageOcr(raw, store, gender);
+}
+
+String? _prepareOcrImage(String path) {
+  final source = img.decodeImage(File(path).readAsBytesSync());
+  if (source == null) return null;
+  final minimumWidthScale = source.width < 900 ? 900 / source.width : 1.0;
+  final maximumSizeScale = 2400 / math.max(source.width, source.height);
+  final scale = math.min(minimumWidthScale, maximumSizeScale);
+  var prepared = (scale - 1).abs() > 0.05
+      ? img.copyResize(source,
+          width: (source.width * scale).round(),
+          height: (source.height * scale).round(),
+          interpolation: img.Interpolation.cubic)
+      : source;
+  prepared = img.adjustColor(prepared, contrast: 1.35, saturation: 0.35);
+  final directory = Directory.systemTemp.createTempSync('baizhan_skill_ocr_');
+  final output = '${directory.path}/prepared.png';
+  File(output).writeAsBytesSync(img.encodePng(prepared));
+  return output;
 }
 
 Map<String, int> parseCharacterImageOcr(

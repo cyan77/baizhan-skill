@@ -7,9 +7,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <future>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <winrt/Windows.Foundation.h>
@@ -32,6 +32,20 @@ struct RecognizedLine {
   double x;
   double y;
 };
+
+struct OcrResultPayload {
+  std::unique_ptr<flutter::MethodResult<EncodableValue>> result;
+  EncodableList lines;
+  std::string error;
+  std::string details;
+};
+
+void PostOcrResult(HWND window, OcrResultPayload* payload) {
+  if (!PostMessage(window, kOcrResultMessage, 0,
+                   reinterpret_cast<LPARAM>(payload))) {
+    delete payload;
+  }
+}
 
 EncodableList RecognizeText(const std::string& path) {
   winrt::init_apartment(winrt::apartment_type::multi_threaded);
@@ -113,13 +127,13 @@ EncodableList RecognizeText(const std::string& path) {
 }  // namespace
 
 std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
-CreateOcrChannel(flutter::BinaryMessenger* messenger) {
+CreateOcrChannel(flutter::BinaryMessenger* messenger, HWND window) {
   auto channel =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           messenger, "baizhan_skill/ocr",
           &flutter::StandardMethodCodec::GetInstance());
   channel->SetMethodCallHandler(
-      [](const flutter::MethodCall<EncodableValue>& call,
+      [window](const flutter::MethodCall<EncodableValue>& call,
          std::unique_ptr<flutter::MethodResult<EncodableValue>> result) {
         if (call.method_name() != "recognizeText") {
           result->NotImplemented();
@@ -141,17 +155,35 @@ CreateOcrChannel(flutter::BinaryMessenger* messenger) {
           result->Error("arguments", "图片路径无效");
           return;
         }
-        try {
-          auto task = std::async(std::launch::async, RecognizeText, *path);
-          result->Success(EncodableValue(task.get()));
-        } catch (const winrt::hresult_error& error) {
-          result->Error("ocr", "Windows 图片文字识别失败",
-                        EncodableValue(winrt::to_string(error.message())));
-        } catch (const std::exception& error) {
-          result->Error("ocr", error.what());
-        } catch (...) {
-          result->Error("ocr", "Windows 图片文字识别发生未知错误");
-        }
+        std::thread([window, path = *path,
+                     result = std::move(result)]() mutable {
+          auto* payload = new OcrResultPayload{std::move(result), {}, {}, {}};
+          try {
+            payload->lines = RecognizeText(path);
+          } catch (const winrt::hresult_error& error) {
+            payload->error = "Windows 图片文字识别失败";
+            payload->details = winrt::to_string(error.message());
+          } catch (const std::exception& error) {
+            payload->error = error.what();
+          } catch (...) {
+            payload->error = "Windows 图片文字识别发生未知错误";
+          }
+          PostOcrResult(window, payload);
+        }).detach();
       });
   return channel;
+}
+
+void HandleOcrResultMessage(LPARAM value) {
+  std::unique_ptr<OcrResultPayload> payload(
+      reinterpret_cast<OcrResultPayload*>(value));
+  if (!payload || !payload->result) return;
+  if (payload->error.empty()) {
+    payload->result->Success(EncodableValue(std::move(payload->lines)));
+  } else if (payload->details.empty()) {
+    payload->result->Error("ocr", payload->error);
+  } else {
+    payload->result->Error("ocr", payload->error,
+                           EncodableValue(payload->details));
+  }
 }
