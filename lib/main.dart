@@ -28,6 +28,8 @@ const line = Color(0xffe4eae7);
 const teal = Color(0xff3c8c72);
 const purple = Color(0xff8d54c7);
 const gold = Color(0xffb56a18);
+const formLabelStyle = TextStyle(
+    color: muted, fontSize: 12, fontWeight: FontWeight.w400, height: 1.1);
 
 class NavigationPageOption {
   const NavigationPageOption(
@@ -1514,7 +1516,8 @@ class SkillStore extends ChangeNotifier {
       required String mind,
       required String position,
       required int swapPoints,
-      required bool weeklyCompleted}) {
+      required bool weeklyCompleted,
+      Map<String, int> skillLevelsByName = const {}}) {
     character.name = name.trim();
     character.gender = gender;
     character.school = normalizeSchool(school);
@@ -1522,6 +1525,14 @@ class SkillStore extends ChangeNotifier {
     character.position = normalizePosition(position);
     character.swapPoints = swapPoints.clamp(0, 1 << 31);
     character.weeklyCompletedWeek = weeklyCompleted ? currentWeekKey() : '';
+    for (final boss in bosses) {
+      for (final skill in boss.skills) {
+        final level = skillLevelsByName[skill.name];
+        if (level != null) {
+          character.levels[skill.id] = level.clamp(1, maxSkillRank).toInt();
+        }
+      }
+    }
     _save();
     notifyListeners();
   }
@@ -2001,6 +2012,25 @@ double _singleLineTextWidth(
   return painter.width;
 }
 
+double _filterMenuWidth(BuildContext context,
+    {required double triggerWidth,
+    required Iterable<String> labels,
+    double fontSize = 12,
+    bool searchable = false}) {
+  const horizontalPadding = 24.0;
+  const checkWidth = 18.0;
+  const checkGap = 5.0;
+  final textStyle = TextStyle(fontSize: fontSize, color: ink);
+  final widestLabel = labels.fold<double>(0, (widest, label) {
+    return math.max(widest, _singleLineTextWidth(context, label, textStyle));
+  });
+  final contentWidth = widestLabel + horizontalPadding + checkWidth + checkGap;
+  final minimumWidth = math.max(triggerWidth, searchable ? 180.0 : 140.0);
+  final availableWidth = math.max(1.0, MediaQuery.sizeOf(context).width - 24.0);
+  return math.min(
+      math.min(280.0, availableWidth), math.max(minimumWidth, contentWidth));
+}
+
 Widget _equalCardRow(List<Widget> cards, double maxWidth) {
   return SizedBox(
       width: maxWidth,
@@ -2041,6 +2071,8 @@ class _FilterDropdownState<T> extends State<_FilterDropdown<T>> {
   final _menuController = OverlayPortalController();
   final _searchController = TextEditingController();
   double _menuHeight = 0;
+  double _menuWidth = 0;
+  double _menuOffsetX = 0;
 
   @override
   void dispose() {
@@ -2080,11 +2112,25 @@ class _FilterDropdownState<T> extends State<_FilterDropdown<T>> {
         math.min(widget.values.length * 44.0 + 12 + searchHeight, 300.0),
         math.max(0.0, _spaceBelow()));
     if (_menuHeight < 1) return;
+    _menuWidth = _filterMenuWidth(context,
+        triggerWidth: widget.width,
+        labels: widget.values.map(widget.itemLabel),
+        searchable: widget.searchable);
+    final box = context.findRenderObject() as RenderBox?;
+    if (box != null) {
+      final left = box.localToGlobal(Offset.zero).dx;
+      final preferredLeft = left + (widget.width - _menuWidth) / 2;
+      final maxLeft =
+          math.max(12.0, MediaQuery.sizeOf(context).width - _menuWidth - 12.0);
+      final clampedLeft = preferredLeft.clamp(12.0, maxLeft).toDouble();
+      _menuOffsetX = clampedLeft - left;
+    } else {
+      _menuOffsetX = (widget.width - _menuWidth) / 2;
+    }
     _menuController.show();
   }
 
   Widget _buildMenu(BuildContext context) {
-    final menuWidth = math.min(widget.width * 0.82, 224.0);
     final query = _searchController.text.trim().toLowerCase();
     final values = widget.values
         .where((item) =>
@@ -2098,9 +2144,9 @@ class _FilterDropdownState<T> extends State<_FilterDropdown<T>> {
       CompositedTransformFollower(
           link: _layerLink,
           showWhenUnlinked: false,
-          offset: Offset((widget.width - menuWidth) / 2, 49),
+          offset: Offset(_menuOffsetX, 49),
           child: SizedBox(
-              width: menuWidth,
+              width: _menuWidth,
               height: _menuHeight,
               child: Material(
                   color: const Color(0xfff9fdfb),
@@ -2164,8 +2210,7 @@ class _FilterDropdownState<T> extends State<_FilterDropdown<T>> {
                                                     child: Text(
                                                         widget.itemLabel(item),
                                                         maxLines: 1,
-                                                        overflow: TextOverflow
-                                                            .ellipsis,
+                                                        softWrap: false,
                                                         style: const TextStyle(
                                                             color: ink,
                                                             fontSize: 12)))
@@ -2235,7 +2280,7 @@ class _LabeledFilterDropdown<T> extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(label, style: const TextStyle(color: muted, fontSize: 12)),
+            Text(label, style: formLabelStyle),
             const SizedBox(height: 5),
             _FilterDropdown<T>(
                 value: value,
@@ -2312,7 +2357,11 @@ class _NameAutocompleteState extends State<_NameAutocomplete> {
             },
             optionsViewBuilder: (context, onSelected, options) {
               final values = options.toList();
-              final menuWidth = math.min(widget.width * 0.82, 224.0);
+              final menuWidth = _filterMenuWidth(context,
+                  triggerWidth: widget.width,
+                  labels: values,
+                  fontSize: 13,
+                  searchable: true);
               return Align(
                   alignment: Alignment.topCenter,
                   child: SizedBox(
@@ -2339,7 +2388,7 @@ class _NameAutocompleteState extends State<_NameAutocomplete> {
                                               horizontal: 13, vertical: 10),
                                           child: Text(values[index],
                                               maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
+                                              softWrap: false,
                                               style: const TextStyle(
                                                   color: ink,
                                                   fontSize: 13)))))))));
@@ -5307,11 +5356,11 @@ class _RemoteBackupListTile extends StatelessWidget {
                 style: const TextStyle(fontSize: 12))),
         if (isCurrent) ...[
           const SizedBox(width: 6),
-          const _BackupVersionBadge(label: '当前', emphasized: true)
+          const _BackupVersionBadge(label: '当前版本', emphasized: true)
         ],
         if (isLatest) ...[
           const SizedBox(width: 6),
-          const _BackupVersionBadge(label: '最新')
+          const _BackupVersionBadge(label: '最新版本')
         ]
       ]),
       subtitle: Text(backup.modifiedAt?.toLocal().toString() ?? '时间未知',
@@ -5992,6 +6041,13 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
   var initialSkillLevel = 1;
   String? importing;
   final importedLevels = <String, int>{};
+  if (character != null) {
+    for (final boss in store.bosses) {
+      for (final skill in boss.skills) {
+        importedLevels[skill.name] = store.level(character.id, skill.id);
+      }
+    }
+  }
   await showDialog<void>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -6001,10 +6057,13 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                   content: SizedBox(
                       width: 440,
                       child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        const Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text('角色名称', style: formLabelStyle)),
+                        const SizedBox(height: 5),
                         TextField(
                             controller: name,
-                            decoration:
-                                const InputDecoration(labelText: '角色名称')),
+                            decoration: const InputDecoration()),
                         const SizedBox(height: 12),
                         Wrap(spacing: 10, runSpacing: 12, children: [
                           _LabeledFilterDropdown<String>(
@@ -6053,17 +6112,23 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                                   setState(() => position = value ?? position)),
                           SizedBox(
                               width: 215,
-                              child: TextField(
-                                  controller: swapPoints,
-                                  keyboardType: TextInputType.number,
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.digitsOnly
-                                  ],
-                                  onChanged: (_) =>
-                                      setState(() => swapPointsError = null),
-                                  decoration: InputDecoration(
-                                      labelText: '换将点',
-                                      errorText: swapPointsError))),
+                              child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Text('换将点', style: formLabelStyle),
+                                    const SizedBox(height: 5),
+                                    TextField(
+                                        controller: swapPoints,
+                                        keyboardType: TextInputType.number,
+                                        inputFormatters: [
+                                          FilteringTextInputFormatter.digitsOnly
+                                        ],
+                                        onChanged: (_) => setState(
+                                            () => swapPointsError = null),
+                                        decoration: InputDecoration(
+                                            errorText: swapPointsError))
+                                  ])),
                           SizedBox(
                               width: 215,
                               child: InkWell(
@@ -6104,144 +6169,143 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                                     initialSkillLevel =
                                         value ?? initialSkillLevel))
                         ]),
-                        if (character == null) ...[
-                          const SizedBox(height: 14),
-                          Row(children: [
-                            Expanded(
-                                child: OutlinedButton.icon(
-                                    onPressed: importing == null
-                                        ? () async {
-                                            setState(() => importing = 'excel');
-                                            try {
-                                              final data =
-                                                  await pickCharacterExcelData(
-                                                      store.maxSkillRank);
-                                              if (data == null) return;
-                                              setState(() {
-                                                name.text = data.name;
-                                                gender = data.gender;
-                                                importedLevels
-                                                  ..clear()
-                                                  ..addAll(
-                                                      normalizeGenderSkillLevels(
-                                                          store,
-                                                          data.gender,
-                                                          data.skillLevels));
-                                                importing = null;
-                                              });
-                                              if (context.mounted) {
-                                                await showCharacterDraftPreview(
-                                                    context,
-                                                    store,
-                                                    importedLevels,
-                                                    initialSkillLevel,
-                                                    gender);
-                                              }
-                                            } on FormatException catch (error) {
-                                              if (context.mounted) {
-                                                ScaffoldMessenger.of(context)
-                                                    .showSnackBar(SnackBar(
-                                                        content: Text(
-                                                            error.message)));
-                                              }
-                                            } catch (_) {
-                                              if (context.mounted) {
-                                                ScaffoldMessenger.of(context)
-                                                    .showSnackBar(const SnackBar(
-                                                        content: Text(
-                                                            'Excel 导入失败，请确认文件格式')));
-                                              }
-                                            } finally {
-                                              if (context.mounted &&
-                                                  importing != null) {
-                                                setState(
-                                                    () => importing = null);
-                                              }
-                                            }
-                                          }
-                                        : null,
-                                    icon: importing == 'excel'
-                                        ? const SizedBox(
-                                            width: 16,
-                                            height: 16,
-                                            child: CircularProgressIndicator(
-                                                strokeWidth: 2))
-                                        : const Icon(Icons.upload_file_outlined,
-                                            size: 17),
-                                    label: Text(importing == 'excel'
-                                        ? '处理中'
-                                        : '导入 Excel'))),
-                            const SizedBox(width: 10),
-                            Expanded(
-                                child: OutlinedButton.icon(
-                                    onPressed: importing == null
-                                        ? () async {
-                                            setState(() => importing = 'image');
-                                            try {
-                                              final levels =
-                                                  await pickCharacterImageLevels(
-                                                      store, gender);
-                                              if (levels == null) return;
-                                              setState(() {
-                                                importedLevels
-                                                  ..clear()
-                                                  ..addAll(levels);
-                                                importing = null;
-                                              });
-                                              if (context.mounted) {
-                                                await showCharacterDraftPreview(
-                                                    context,
-                                                    store,
-                                                    importedLevels,
-                                                    initialSkillLevel,
-                                                    gender);
-                                              }
-                                            } catch (error) {
-                                              if (context.mounted) {
-                                                ScaffoldMessenger.of(context)
-                                                    .showSnackBar(SnackBar(
-                                                        content: Text(error
-                                                            .toString()
-                                                            .replaceFirst(
-                                                                'FormatException: ',
-                                                                ''))));
-                                              }
-                                            } finally {
-                                              if (context.mounted &&
-                                                  importing != null) {
-                                                setState(
-                                                    () => importing = null);
-                                              }
-                                            }
-                                          }
-                                        : null,
-                                    icon: importing == 'image'
-                                        ? const SizedBox(
-                                            width: 16,
-                                            height: 16,
-                                            child: CircularProgressIndicator(
-                                                strokeWidth: 2))
-                                        : const Icon(Icons.image_outlined,
-                                            size: 17),
-                                    label: Text(
-                                        importing == 'image' ? '处理中' : '导入图片')))
-                          ]),
-                          const SizedBox(height: 10),
-                          SizedBox(
-                              width: double.infinity,
-                              child: TextButton.icon(
+                        const SizedBox(height: 14),
+                        Row(children: [
+                          Expanded(
+                              child: OutlinedButton.icon(
                                   onPressed: importing == null
-                                      ? () => showCharacterDraftPreview(
-                                          context,
-                                          store,
-                                          importedLevels,
-                                          initialSkillLevel,
-                                          gender)
+                                      ? () async {
+                                          setState(() => importing = 'excel');
+                                          try {
+                                            final data =
+                                                await pickCharacterExcelData(
+                                                    store.maxSkillRank);
+                                            if (data == null) return;
+                                            final levels =
+                                                normalizeGenderSkillLevels(
+                                                    store,
+                                                    data.gender,
+                                                    data.skillLevels);
+                                            setState(() {
+                                              name.text = data.name;
+                                              gender = data.gender;
+                                              if (character == null) {
+                                                importedLevels.clear();
+                                              }
+                                              importedLevels.addAll(levels);
+                                              importing = null;
+                                            });
+                                            if (context.mounted) {
+                                              await showCharacterDraftPreview(
+                                                  context,
+                                                  store,
+                                                  importedLevels,
+                                                  initialSkillLevel,
+                                                  gender);
+                                            }
+                                          } on FormatException catch (error) {
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(SnackBar(
+                                                      content:
+                                                          Text(error.message)));
+                                            }
+                                          } catch (_) {
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(const SnackBar(
+                                                      content: Text(
+                                                          'Excel 导入失败，请确认文件格式')));
+                                            }
+                                          } finally {
+                                            if (context.mounted &&
+                                                importing != null) {
+                                              setState(() => importing = null);
+                                            }
+                                          }
+                                        }
                                       : null,
-                                  icon: const Icon(Icons.preview_outlined,
-                                      size: 17),
-                                  label: const Text('预览技能与属性')))
-                        ],
+                                  icon: importing == 'excel'
+                                      ? const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2))
+                                      : const Icon(Icons.upload_file_outlined,
+                                          size: 17),
+                                  label: Text(importing == 'excel'
+                                      ? '处理中'
+                                      : '导入 Excel'))),
+                          const SizedBox(width: 10),
+                          Expanded(
+                              child: OutlinedButton.icon(
+                                  onPressed: importing == null
+                                      ? () async {
+                                          setState(() => importing = 'image');
+                                          try {
+                                            final levels =
+                                                await pickCharacterImageLevels(
+                                                    store, gender);
+                                            if (levels == null) return;
+                                            setState(() {
+                                              if (character == null) {
+                                                importedLevels.clear();
+                                              }
+                                              importedLevels.addAll(levels);
+                                              importing = null;
+                                            });
+                                            if (context.mounted) {
+                                              await showCharacterDraftPreview(
+                                                  context,
+                                                  store,
+                                                  importedLevels,
+                                                  initialSkillLevel,
+                                                  gender);
+                                            }
+                                          } catch (error) {
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(SnackBar(
+                                                      content: Text(error
+                                                          .toString()
+                                                          .replaceFirst(
+                                                              'FormatException: ',
+                                                              ''))));
+                                            }
+                                          } finally {
+                                            if (context.mounted &&
+                                                importing != null) {
+                                              setState(() => importing = null);
+                                            }
+                                          }
+                                        }
+                                      : null,
+                                  icon: importing == 'image'
+                                      ? const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2))
+                                      : const Icon(Icons.image_outlined,
+                                          size: 17),
+                                  label: Text(
+                                      importing == 'image' ? '处理中' : '导入图片')))
+                        ]),
+                        const SizedBox(height: 10),
+                        SizedBox(
+                            width: double.infinity,
+                            child: TextButton.icon(
+                                onPressed: importing == null
+                                    ? () => showCharacterDraftPreview(
+                                        context,
+                                        store,
+                                        importedLevels,
+                                        initialSkillLevel,
+                                        gender)
+                                    : null,
+                                icon: const Icon(Icons.preview_outlined,
+                                    size: 17),
+                                label: const Text('预览技能与属性'))),
                         const SizedBox(height: 12),
                         const Align(
                             alignment: Alignment.centerLeft,
@@ -6305,7 +6369,8 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                                       mind: mind,
                                       position: position,
                                       swapPoints: parsedSwapPoints,
-                                      weeklyCompleted: weeklyCompleted);
+                                      weeklyCompleted: weeklyCompleted,
+                                      skillLevelsByName: importedLevels);
                                 }
                                 Navigator.pop(context);
                               }

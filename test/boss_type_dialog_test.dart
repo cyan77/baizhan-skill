@@ -111,6 +111,7 @@ void main() {
   testWidgets('character preview expands skills and edits their ranks',
       (tester) async {
     final store = SkillStore();
+    store.maxSkillRank = 11;
     final skill = Skill(id: 'preview-skill', name: '预览技能');
     store.bosses.add(Boss(
         id: 'preview-boss',
@@ -141,6 +142,7 @@ void main() {
 
     await tester.tap(find.text('1 重'));
     await tester.pumpAndSettle();
+    expect(find.text('11 重'), findsOneWidget);
     await tester.tap(find.text('8 重').last);
     await tester.pumpAndSettle();
     expect(overrides['预览技能'], 8);
@@ -336,6 +338,16 @@ void main() {
     await tester.tap(find.text('编辑角色'));
     await tester.pumpAndSettle();
     expect(find.text('测试角色'), findsOneWidget);
+    expect(find.text('导入 Excel'), findsOneWidget);
+    expect(find.text('导入图片'), findsOneWidget);
+    expect(find.text('预览技能与属性'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('预览技能与属性'));
+    await tester.tap(find.text('预览技能与属性'));
+    await tester.pumpAndSettle();
+    expect(find.text('角色技能预览'), findsOneWidget);
+    await tester.tap(find.text('关闭预览'));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
@@ -376,6 +388,53 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('角色技能预览'), findsOneWidget);
     expect(find.text('关闭预览'), findsOneWidget);
+  });
+
+  testWidgets('editing character preview saves changed skill levels',
+      (tester) async {
+    final store = SkillStore();
+    store.bosses.add(Boss(
+        id: 'edit-preview-boss',
+        name: '编辑预览首领',
+        spirit: 400,
+        stamina: 400,
+        skills: [Skill(id: 'edit-preview-skill', name: '编辑预览技能')]));
+    final character = CharacterData(
+        id: 'edit-preview-character',
+        name: '编辑预览角色',
+        gender: '女性',
+        school: '未设置',
+        mind: '未设置',
+        position: '输出',
+        levels: const {'edit-preview-skill': 3});
+    store.characters.add(character);
+
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: Builder(
+                builder: (context) => TextButton(
+                    onPressed: () => showCharacterDialog(context, store,
+                        character: character),
+                    child: const Text('编辑预览角色'))))));
+
+    await tester.tap(find.text('编辑预览角色'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('预览技能与属性'));
+    await tester.tap(find.text('预览技能与属性'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('编辑预览首领'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('3 重'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('8 重').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('关闭预览'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(store.level(character.id, 'edit-preview-skill'), 8);
+    expect(tester.takeException(), isNull);
   });
 
   test('new characters default every skill to rank one and support batching',
@@ -619,8 +678,8 @@ void main() {
         MaterialApp(home: Scaffold(body: SyncBackupPage(store: store))));
     await tester.pumpAndSettle();
 
-    expect(find.text('当前'), findsOneWidget);
-    expect(find.text('最新'), findsOneWidget);
+    expect(find.text('当前版本'), findsOneWidget);
+    expect(find.text('最新版本'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
