@@ -4981,6 +4981,7 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
   var mind = character?.mind ?? '未设置';
   var position = character?.position ?? 'dps';
   var initialSkillLevel = 1;
+  String? importing;
   final importedLevels = <String, int>{};
   await showDialog<void>(
       context: context,
@@ -5046,96 +5047,134 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                           Row(children: [
                             Expanded(
                                 child: OutlinedButton.icon(
-                                    onPressed: () async {
-                                      try {
-                                        final data =
-                                            await pickCharacterExcelData();
-                                        if (data == null) return;
-                                        setState(() {
-                                          name.text = data.name;
-                                          gender = data.gender;
-                                          importedLevels
-                                            ..clear()
-                                            ..addAll(normalizeGenderSkillLevels(
-                                                store,
-                                                data.gender,
-                                                data.skillLevels));
-                                        });
-                                        if (context.mounted) {
-                                          await showCharacterDraftPreview(
-                                              context,
-                                              store,
-                                              importedLevels,
-                                              initialSkillLevel,
-                                              gender);
-                                        }
-                                      } on FormatException catch (error) {
-                                        if (context.mounted) {
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(SnackBar(
-                                                  content:
-                                                      Text(error.message)));
-                                        }
-                                      } catch (_) {
-                                        if (context.mounted) {
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(const SnackBar(
-                                                  content: Text(
-                                                      'Excel 导入失败，请确认文件格式')));
-                                        }
-                                      }
-                                    },
-                                    icon: const Icon(Icons.upload_file_outlined,
-                                        size: 17),
-                                    label: const Text('导入 Excel'))),
+                                    onPressed: importing == null
+                                        ? () async {
+                                            setState(() => importing = 'excel');
+                                            try {
+                                              final data =
+                                                  await pickCharacterExcelData();
+                                              if (data == null) return;
+                                              setState(() {
+                                                name.text = data.name;
+                                                gender = data.gender;
+                                                importedLevels
+                                                  ..clear()
+                                                  ..addAll(
+                                                      normalizeGenderSkillLevels(
+                                                          store,
+                                                          data.gender,
+                                                          data.skillLevels));
+                                                importing = null;
+                                              });
+                                              if (context.mounted) {
+                                                await showCharacterDraftPreview(
+                                                    context,
+                                                    store,
+                                                    importedLevels,
+                                                    initialSkillLevel,
+                                                    gender);
+                                              }
+                                            } on FormatException catch (error) {
+                                              if (context.mounted) {
+                                                ScaffoldMessenger.of(context)
+                                                    .showSnackBar(SnackBar(
+                                                        content: Text(
+                                                            error.message)));
+                                              }
+                                            } catch (_) {
+                                              if (context.mounted) {
+                                                ScaffoldMessenger.of(context)
+                                                    .showSnackBar(const SnackBar(
+                                                        content: Text(
+                                                            'Excel 导入失败，请确认文件格式')));
+                                              }
+                                            } finally {
+                                              if (context.mounted &&
+                                                  importing != null) {
+                                                setState(
+                                                    () => importing = null);
+                                              }
+                                            }
+                                          }
+                                        : null,
+                                    icon: importing == 'excel'
+                                        ? const SizedBox(
+                                            width: 16,
+                                            height: 16,
+                                            child: CircularProgressIndicator(
+                                                strokeWidth: 2))
+                                        : const Icon(Icons.upload_file_outlined,
+                                            size: 17),
+                                    label: Text(importing == 'excel'
+                                        ? '处理中'
+                                        : '导入 Excel'))),
                             const SizedBox(width: 10),
                             Expanded(
                                 child: OutlinedButton.icon(
-                                    onPressed: () async {
-                                      try {
-                                        final levels =
-                                            await pickCharacterImageLevels(
-                                                store, gender);
-                                        if (levels == null) return;
-                                        setState(() {
-                                          importedLevels
-                                            ..clear()
-                                            ..addAll(levels);
-                                        });
-                                        if (context.mounted) {
-                                          await showCharacterDraftPreview(
-                                              context,
-                                              store,
-                                              importedLevels,
-                                              initialSkillLevel,
-                                              gender);
-                                        }
-                                      } catch (error) {
-                                        if (context.mounted) {
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(SnackBar(
-                                                  content: Text(error
-                                                      .toString()
-                                                      .replaceFirst(
-                                                          'FormatException: ',
-                                                          ''))));
-                                        }
-                                      }
-                                    },
-                                    icon: const Icon(Icons.image_outlined,
-                                        size: 17),
-                                    label: const Text('导入图片')))
+                                    onPressed: importing == null
+                                        ? () async {
+                                            setState(() => importing = 'image');
+                                            try {
+                                              final levels =
+                                                  await pickCharacterImageLevels(
+                                                      store, gender);
+                                              if (levels == null) return;
+                                              setState(() {
+                                                importedLevels
+                                                  ..clear()
+                                                  ..addAll(levels);
+                                                importing = null;
+                                              });
+                                              if (context.mounted) {
+                                                await showCharacterDraftPreview(
+                                                    context,
+                                                    store,
+                                                    importedLevels,
+                                                    initialSkillLevel,
+                                                    gender);
+                                              }
+                                            } catch (error) {
+                                              if (context.mounted) {
+                                                ScaffoldMessenger.of(context)
+                                                    .showSnackBar(SnackBar(
+                                                        content: Text(error
+                                                            .toString()
+                                                            .replaceFirst(
+                                                                'FormatException: ',
+                                                                ''))));
+                                              }
+                                            } finally {
+                                              if (context.mounted &&
+                                                  importing != null) {
+                                                setState(
+                                                    () => importing = null);
+                                              }
+                                            }
+                                          }
+                                        : null,
+                                    icon: importing == 'image'
+                                        ? const SizedBox(
+                                            width: 16,
+                                            height: 16,
+                                            child: CircularProgressIndicator(
+                                                strokeWidth: 2))
+                                        : const Icon(Icons.image_outlined,
+                                            size: 17),
+                                    label: Text(
+                                        importing == 'image' ? '处理中' : '导入图片')))
                           ]),
                           const SizedBox(height: 10),
                           SizedBox(
                               width: double.infinity,
                               child: TextButton.icon(
-                                  onPressed: () => showCharacterDraftPreview(
-                                      context,
-                                      store,
-                                      importedLevels,
-                                      initialSkillLevel,
-                                      gender),
+                                  onPressed: importing == null
+                                      ? () => showCharacterDraftPreview(
+                                          context,
+                                          store,
+                                          importedLevels,
+                                          initialSkillLevel,
+                                          gender)
+                                      : null,
                                   icon: const Icon(Icons.preview_outlined,
                                       size: 17),
                                   label: const Text('预览技能与属性')))
@@ -5151,26 +5190,28 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                         onPressed: () => Navigator.pop(context),
                         child: const Text('取消')),
                     FilledButton(
-                        onPressed: () {
-                          if (character == null) {
-                            store.addCharacter(
-                                name: name.text,
-                                gender: gender,
-                                school: school,
-                                mind: mind,
-                                position: position,
-                                initialSkillLevel: initialSkillLevel,
-                                skillLevelsByName: importedLevels);
-                          } else {
-                            store.updateCharacter(character,
-                                name: name.text,
-                                gender: gender,
-                                school: school,
-                                mind: mind,
-                                position: position);
-                          }
-                          Navigator.pop(context);
-                        },
+                        onPressed: importing == null
+                            ? () {
+                                if (character == null) {
+                                  store.addCharacter(
+                                      name: name.text,
+                                      gender: gender,
+                                      school: school,
+                                      mind: mind,
+                                      position: position,
+                                      initialSkillLevel: initialSkillLevel,
+                                      skillLevelsByName: importedLevels);
+                                } else {
+                                  store.updateCharacter(character,
+                                      name: name.text,
+                                      gender: gender,
+                                      school: school,
+                                      mind: mind,
+                                      position: position);
+                                }
+                                Navigator.pop(context);
+                              }
+                            : null,
                         child: const Text('保存'))
                   ])));
   name.dispose();
