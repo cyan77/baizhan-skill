@@ -828,8 +828,8 @@ class SkillStore extends ChangeNotifier {
     if (checked && newerRemoteBackup == null) _scheduleChangeSync();
   }
 
-  Future<bool> testSyncConnection() async {
-    final config = syncConfig;
+  Future<bool> testSyncConnection([SyncConfig? candidate]) async {
+    final config = candidate ?? syncConfig;
     if (config == null || !config.isValid) {
       syncMessage = '尚未配置完整的 WebDAV';
       notifyListeners();
@@ -2735,7 +2735,7 @@ class _HomePageState extends State<HomePage> {
                 : const Icon(Icons.sync, color: teal)),
         IconButton(
             tooltip: '同步设置',
-            onPressed: () => store.setPage(4),
+            onPressed: () => store.setPage(7),
             icon: const Icon(Icons.settings_outlined, color: muted))
       ]));
 }
@@ -4962,9 +4962,26 @@ class _UpdateSettingCardState extends State<_UpdateSettingCard> {
   }
 }
 
-class SyncBackupPage extends StatelessWidget {
+class SyncBackupPage extends StatefulWidget {
   const SyncBackupPage({required this.store, super.key});
   final SkillStore store;
+
+  @override
+  State<SyncBackupPage> createState() => _SyncBackupPageState();
+}
+
+class _SyncBackupPageState extends State<SyncBackupPage> {
+  SkillStore get store => widget.store;
+
+  @override
+  void initState() {
+    super.initState();
+    if (store.syncConfig?.isValid == true && store.remoteBackups.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) store.loadRemoteBackups();
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) => PageBody(
@@ -5066,9 +5083,39 @@ class SyncBackupPage extends StatelessWidget {
                 icon: const Icon(Icons.history, size: 17),
                 label: Text(store.backupCheckBusy ? '读取中…' : '远程备份'))
           ]),
-          if (store.remoteBackups.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            const Divider(height: 1),
+          const SizedBox(height: 14),
+          const Divider(height: 1),
+          Padding(
+              padding: const EdgeInsets.only(top: 12, bottom: 4),
+              child: Row(children: [
+                const Expanded(
+                    child: Text('远程备份列表',
+                        style: TextStyle(
+                            color: ink,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600))),
+                IconButton(
+                    tooltip: '刷新远程备份',
+                    onPressed: store.backupCheckBusy
+                        ? null
+                        : () => _loadBackups(context),
+                    icon: store.backupCheckBusy
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.refresh, size: 19))
+              ])),
+          if (store.remoteBackups.isEmpty)
+            Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Center(
+                    child: Text(
+                        store.syncConfig?.isValid == true
+                            ? '暂无远程备份，点击刷新重新读取'
+                            : '配置并测试 WebDAV 后，这里会显示远程备份',
+                        style: const TextStyle(color: muted, fontSize: 12))))
+          else
             ...store.remoteBackups.asMap().entries.map((entry) =>
                 _RemoteBackupListTile(
                     backup: entry.value,
@@ -5079,7 +5126,6 @@ class SyncBackupPage extends StatelessWidget {
                         ? null
                         : () => confirmRemoteBackupRestore(
                             context, store, entry.value)))
-          ]
         ]))
       ]));
 
@@ -5131,6 +5177,14 @@ class SyncBackupPage extends StatelessWidget {
     final remotePath = TextEditingController(
         text: config?.remotePath ?? defaultWebDavBackupPath);
     var autoMinutes = config?.autoSyncMinutes ?? 0;
+    var testing = false;
+    String? testResult;
+    SyncConfig draftConfig() => SyncConfig(
+        url: url.text,
+        username: username.text,
+        password: password.text,
+        remotePath: remotePath.text,
+        autoSyncMinutes: autoMinutes);
     final saved = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => StatefulBuilder(
@@ -5168,24 +5222,56 @@ class SyncBackupPage extends StatelessWidget {
                             itemLabel: (value) =>
                                 value == 0 ? '关闭' : '每 $value 分钟',
                             onChanged: (value) =>
-                                setState(() => autoMinutes = value ?? 0))
+                                setState(() => autoMinutes = value ?? 0)),
+                        if (testResult != null) ...[
+                          const SizedBox(height: 10),
+                          Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(testResult!,
+                                  style: TextStyle(
+                                      color: testResult == '连接成功'
+                                          ? teal
+                                          : Theme.of(context).colorScheme.error,
+                                      fontSize: 12)))
+                        ]
                       ]))),
                   actions: [
                     TextButton(
                         onPressed: () => Navigator.pop(dialogContext, false),
                         child: const Text('取消')),
+                    OutlinedButton.icon(
+                        onPressed: testing
+                            ? null
+                            : () async {
+                                setState(() {
+                                  testing = true;
+                                  testResult = null;
+                                });
+                                final ok = await store
+                                    .testSyncConnection(draftConfig());
+                                if (!dialogContext.mounted) return;
+                                setState(() {
+                                  testing = false;
+                                  testResult = store.syncMessage ??
+                                      (ok ? '连接成功' : '连接失败');
+                                });
+                              },
+                        icon: testing
+                            ? const SizedBox(
+                                width: 15,
+                                height: 15,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.wifi_tethering, size: 17),
+                        label: Text(testing ? '测试中…' : '测试连接')),
                     FilledButton(
                         onPressed: () => Navigator.pop(dialogContext, true),
                         child: const Text('保存'))
                   ],
                 )));
     if (saved == true) {
-      await store.saveSyncConfig(SyncConfig(
-          url: url.text,
-          username: username.text,
-          password: password.text,
-          remotePath: remotePath.text,
-          autoSyncMinutes: autoMinutes));
+      await store.saveSyncConfig(draftConfig());
+      if (store.syncConfig?.isValid == true) await store.loadRemoteBackups();
     }
     url.dispose();
     username.dispose();

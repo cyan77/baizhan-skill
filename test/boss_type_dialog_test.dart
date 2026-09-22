@@ -623,6 +623,54 @@ void main() {
     expect(find.text('最新'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('sync page always shows backup list and connection test',
+      (tester) async {
+    final store = SkillStore();
+
+    await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: SyncBackupPage(store: store))));
+    await tester.pumpAndSettle();
+
+    expect(find.text('远程备份列表'), findsOneWidget);
+    expect(find.text('配置并测试 WebDAV 后，这里会显示远程备份'), findsOneWidget);
+
+    await tester.tap(find.text('配置'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('测试连接'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('home sync settings opens sync configuration page',
+      (tester) async {
+    final store = SkillStore();
+    await tester.binding.setSurfaceSize(const Size(1200, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: HomePage(store: store))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('同步设置'));
+
+    expect(store.page, 7);
+  });
+
+  test('connection test accepts unsaved draft configuration', () async {
+    final service = _FakeWebDavSyncService();
+    final store = SkillStore(webDavSyncService: service);
+    const draft = SyncConfig(
+        url: 'https://draft.example.com',
+        username: 'draft-user',
+        password: 'draft-password',
+        remotePath: '/draft.json');
+
+    final connected = await store.testSyncConnection(draft);
+
+    expect(connected, isTrue);
+    expect(service.testedConfig, same(draft));
+    expect(store.syncConfig, isNull);
+  });
 }
 
 class _FakeWebDavSyncService extends WebDavSyncService {
@@ -630,6 +678,12 @@ class _FakeWebDavSyncService extends WebDavSyncService {
 
   final String downloadPayload;
   bool uploadCalled = false;
+  SyncConfig? testedConfig;
+
+  @override
+  Future<void> testConnection(SyncConfig config) async {
+    testedConfig = config;
+  }
 
   @override
   Future<List<RemoteBackup>> listBackups(SyncConfig config) async => [
