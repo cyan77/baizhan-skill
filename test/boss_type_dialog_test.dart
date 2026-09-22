@@ -703,6 +703,67 @@ void main() {
         ['second', 'archived', 'first']);
   });
 
+  test('disabling a character removes it from selection and active lists', () {
+    final store = SkillStore();
+    final first = CharacterData(
+        id: 'enabled-character',
+        name: '启用角色',
+        gender: '女性',
+        school: '未设置',
+        mind: '未设置',
+        position: '输出',
+        levels: const {});
+    final second = CharacterData(
+        id: 'other-character',
+        name: '其他角色',
+        gender: '男性',
+        school: '未设置',
+        mind: '未设置',
+        position: '输出',
+        levels: const {});
+    store.characters.addAll([first, second]);
+    store.selectedCharacterId = first.id;
+
+    store.setCharacterArchived(first, true);
+
+    expect(first.archived, isTrue);
+    expect(store.activeCharacters.map((item) => item.id), [second.id]);
+    expect(store.selectedCharacterId, second.id);
+    store.selectCharacter(first.id);
+    expect(store.selectedCharacterId, second.id);
+  });
+
+  testWidgets('character status icon follows the enabled style and toggles',
+      (tester) async {
+    final store = SkillStore();
+    final character = CharacterData(
+        id: 'status-character',
+        name: '状态角色',
+        gender: '女性',
+        school: '未设置',
+        mind: '未设置',
+        position: '输出',
+        levels: const {});
+    store.characters.add(character);
+
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: ListenableBuilder(
+                listenable: store,
+                builder: (context, _) =>
+                    CharacterManagementPage(store: store)))));
+    await tester.pumpAndSettle();
+
+    expect(find.byIcon(Icons.check_rounded), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.check_rounded));
+    await tester.pumpAndSettle();
+
+    expect(character.archived, isTrue);
+    expect(store.activeCharacters, isEmpty);
+    expect(find.byIcon(Icons.close_rounded), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   test('remote Boss updates preserve ranks and default new skills to one',
       () async {
     final store = SkillStore();

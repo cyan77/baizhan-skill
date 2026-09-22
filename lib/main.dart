@@ -454,7 +454,12 @@ class SkillStore extends ChangeNotifier {
   int _syncedRevision = 0;
   int _successfulSyncGeneration = 0;
   bool _syncInitialized = false;
-  CharacterData? get selectedCharacter => _findCharacter(selectedCharacterId);
+  CharacterData? get selectedCharacter {
+    final selected = _findCharacter(selectedCharacterId);
+    if (selected != null && !selected.archived) return selected;
+    return activeCharacters.firstOrNull;
+  }
+
   List<CharacterData> get activeCharacters =>
       characters.where((item) => !item.archived).toList();
 
@@ -649,6 +654,7 @@ class SkillStore extends ChangeNotifier {
         skill.tradable = skill.tradable || purpleSkills.contains(skill.name);
     selectedCharacterId =
         data['selectedCharacterId'] as String? ?? characters.first.id;
+    _ensureSelectedCharacterIsActive();
     page = (data['page'] as int? ?? 0).clamp(0, 7);
     final validNavigationIds =
         navigationPageOptions.map((item) => item.id).toSet();
@@ -990,9 +996,25 @@ class SkillStore extends ChangeNotifier {
   int level(String characterId, String skillId) =>
       _findCharacter(characterId)?.levels[skillId] ?? 0;
   void selectCharacter(String id) {
+    final character = _findCharacter(id);
+    if (character == null || character.archived) return;
     selectedCharacterId = id;
     _save();
     notifyListeners();
+  }
+
+  void setCharacterArchived(CharacterData character, bool archived) {
+    if (character.archived == archived) return;
+    character.archived = archived;
+    _ensureSelectedCharacterIsActive();
+    _save();
+    notifyListeners();
+  }
+
+  void _ensureSelectedCharacterIsActive() {
+    final selected = _findCharacter(selectedCharacterId);
+    if (selected != null && !selected.archived) return;
+    selectedCharacterId = activeCharacters.firstOrNull?.id ?? '';
   }
 
   void setPage(int value) {
@@ -1043,7 +1065,7 @@ class SkillStore extends ChangeNotifier {
 
   void setLevelForAllCharacters(String skillId, int value) {
     final normalized = value.clamp(0, maxSkillRank).toInt();
-    for (final character in characters) {
+    for (final character in activeCharacters) {
       character.levels[skillId] = normalized;
     }
     _save();
@@ -1053,8 +1075,9 @@ class SkillStore extends ChangeNotifier {
   void setAllSkillLevels(int value, {String? characterId}) {
     final normalized = value.clamp(1, maxSkillRank).toInt();
     final targets = characterId == null
-        ? characters
-        : characters.where((character) => character.id == characterId);
+        ? activeCharacters
+        : characters.where(
+            (character) => character.id == characterId && !character.archived);
     for (final character in targets) {
       for (final boss in bosses) {
         for (final skill in boss.skills) {
@@ -1332,9 +1355,7 @@ class SkillStore extends ChangeNotifier {
     if (bytes == null) return false;
     final data = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
     _replaceData(data);
-    if (selectedCharacterId.isEmpty && characters.isNotEmpty) {
-      selectedCharacterId = characters.first.id;
-    }
+    _ensureSelectedCharacterIsActive();
     _save();
     notifyListeners();
     return true;
@@ -1574,9 +1595,7 @@ class SkillStore extends ChangeNotifier {
   void removeCharacter(CharacterData character) {
     if (characters.length <= 1) return;
     characters.removeWhere((item) => item.id == character.id);
-    if (selectedCharacterId == character.id) {
-      selectedCharacterId = activeCharacters.first.id;
-    }
+    _ensureSelectedCharacterIsActive();
     _save();
     notifyListeners();
   }
@@ -3165,7 +3184,6 @@ class _CharacterSwitcherState extends State<CharacterSwitcher> {
                   final character = visibleCharacters[index];
                   final active =
                       character.id == widget.store.selectedCharacterId;
-                  final completed = character.weeklyCompleted;
                   final minds = schoolMindPositions[character.school];
                   final characterLabel =
                       minds?.length == 1 ? character.school : character.mind;
@@ -3196,14 +3214,10 @@ class _CharacterSwitcherState extends State<CharacterSwitcher> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 10),
                           decoration: BoxDecoration(
-                              color: completed
-                                  ? const Color(0xffe2f3eb)
-                                  : active
-                                      ? const Color(0xffedf7f3)
-                                      : const Color(0xfff7f9f8),
-                              border: Border.all(
-                                  color: completed || active ? teal : line,
-                                  width: completed ? 1.5 : 1),
+                              color: active
+                                  ? const Color(0xffedf7f3)
+                                  : const Color(0xfff7f9f8),
+                              border: Border.all(color: active ? teal : line),
                               borderRadius: BorderRadius.circular(10)),
                           child: Row(children: [
                             MindAvatar(character: character),
@@ -3258,24 +3272,24 @@ class CharacterManagementPage extends StatelessWidget {
               label: const Text('添加角色'))
         ]),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('按角色管理独立的技能重数记录，双击角色可编辑。',
+          const Text('按角色管理独立的技能重数记录，双击角色可编辑；打叉后不会出现在其他页面。',
               style: TextStyle(color: muted, fontSize: 12)),
           const SizedBox(height: 18),
-          if (store.activeCharacters.isEmpty)
+          if (store.characters.isEmpty)
             const CardShell(
                 child: Text('暂无角色，请先添加角色。', style: TextStyle(color: muted)))
           else
             GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-                itemCount: store.activeCharacters.length,
+                itemCount: store.characters.length,
                 gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: columns,
                     crossAxisSpacing: 16,
                     mainAxisSpacing: 16,
                     mainAxisExtent: 216),
                 itemBuilder: (context, index) {
-                  final character = store.activeCharacters[index];
+                  final character = store.characters[index];
                   final levels = character.levels.values;
                   final progress = levels.isEmpty
                       ? 0.0
@@ -3293,8 +3307,13 @@ class CharacterManagementPage extends StatelessWidget {
                           child: Container(
                               padding: const EdgeInsets.all(18),
                               decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  border: Border.all(color: line),
+                                  color: character.archived
+                                      ? const Color(0xfff4f7f5)
+                                      : Colors.white,
+                                  border: Border.all(
+                                      color: character.archived
+                                          ? const Color(0xffd5dfda)
+                                          : line),
                                   borderRadius: BorderRadius.circular(10)),
                               child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -3338,6 +3357,32 @@ class CharacterManagementPage extends StatelessWidget {
                                                   fontWeight:
                                                       FontWeight.w700))),
                                       Tooltip(
+                                          message: character.archived
+                                              ? '已禁用，点击启用'
+                                              : '已启用，点击禁用',
+                                          child: Listener(
+                                              behavior: HitTestBehavior.opaque,
+                                              onPointerUp: (_) =>
+                                                  store.setCharacterArchived(
+                                                      character,
+                                                      !character.archived),
+                                              child: Container(
+                                                  width: 28,
+                                                  height: 28,
+                                                  margin: const EdgeInsets.only(
+                                                      right: 2),
+                                                  decoration: BoxDecoration(
+                                                      color: character.archived
+                                                          ? const Color(
+                                                              0xfff3e9e7)
+                                                          : const Color(
+                                                              0xffe2f3eb),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              8),
+                                                      border: Border.all(color: character.archived ? const Color(0xffd5aaa2) : const Color(0xffacd7c4))),
+                                                  child: Icon(character.archived ? Icons.close_rounded : Icons.check_rounded, size: 17, color: character.archived ? const Color(0xffa96d65) : teal)))),
+                                      Tooltip(
                                           message: '编辑角色',
                                           child: Listener(
                                               behavior: HitTestBehavior.opaque,
@@ -3367,7 +3412,9 @@ class CharacterManagementPage extends StatelessWidget {
                                             minHeight: 7,
                                             backgroundColor:
                                                 const Color(0xffe2e9e5),
-                                            color: teal)),
+                                            color: character.archived
+                                                ? muted
+                                                : teal)),
                                     const Spacer(),
                                     Row(children: [
                                       Text(
@@ -3375,9 +3422,12 @@ class CharacterManagementPage extends StatelessWidget {
                                           style: const TextStyle(
                                               color: muted, fontSize: 12)),
                                       const Spacer(),
-                                      const Text('双击编辑角色',
+                                      Text(
+                                          character.archived ? '已禁用' : '双击编辑角色',
                                           style: TextStyle(
-                                              color: teal,
+                                              color: character.archived
+                                                  ? muted
+                                                  : teal,
                                               fontSize: 13,
                                               fontWeight: FontWeight.w700))
                                     ])
@@ -3881,8 +3931,14 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
     super.dispose();
   }
 
+  String get effectiveCharacterId => widget.store.activeCharacters
+          .any((character) => character.id == characterId)
+      ? characterId
+      : 'all';
+
   List<CharacterData> get filteredCharacters => widget.store.activeCharacters
-      .where((character) => characterId == 'all' || character.id == characterId)
+      .where((character) =>
+          effectiveCharacterId == 'all' || character.id == effectiveCharacterId)
       .toList();
 
   List<String> get filteredSkills {
@@ -3908,7 +3964,7 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
         final width = _filterItemWidth(constraints.maxWidth, 3);
         return Wrap(spacing: 10, runSpacing: 10, children: [
           _FilterDropdown<String>(
-              value: characterId,
+              value: effectiveCharacterId,
               values: [
                 'all',
                 ...widget.store.activeCharacters.map((item) => item.id)
@@ -4068,11 +4124,16 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
 
   List<CharacterData> get characters => widget.store.activeCharacters;
 
+  String get effectiveCharacterId =>
+      characters.any((character) => character.id == characterId)
+          ? characterId
+          : 'all';
+
   List<Boss> get filteredBosses {
     final query = bossQuery.text.trim().toLowerCase();
-    final character = characterId == 'all'
+    final character = effectiveCharacterId == 'all' || characters.isEmpty
         ? null
-        : characters.firstWhere((item) => item.id == characterId,
+        : characters.firstWhere((item) => item.id == effectiveCharacterId,
             orElse: () => characters.first);
     return widget.store.bosses.where((boss) {
       final rank =
@@ -4092,7 +4153,7 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
                     content: SizedBox(
                         width: 260,
                         child: _LabeledFilterDropdown<int>(
-                            label: characterId == 'all'
+                            label: effectiveCharacterId == 'all'
                                 ? '全部角色的全部技能'
                                 : '当前角色的全部技能',
                             value: selectedRank,
@@ -4112,15 +4173,16 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
                     ])));
     if (confirmed != true) return;
     widget.store.setAllSkillLevels(selectedRank,
-        characterId: characterId == 'all' ? null : characterId);
+        characterId:
+            effectiveCharacterId == 'all' ? null : effectiveCharacterId);
     if (mounted) setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
-    final character = characterId == 'all'
+    final character = effectiveCharacterId == 'all' || characters.isEmpty
         ? null
-        : characters.firstWhere((item) => item.id == characterId,
+        : characters.firstWhere((item) => item.id == effectiveCharacterId,
             orElse: () => characters.first);
     return PageBody(
         title: '所有技能汇总',
