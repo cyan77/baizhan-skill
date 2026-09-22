@@ -4151,32 +4151,9 @@ class BossPage extends StatelessWidget {
       ]));
 
   Future<void> _setMaxRank(BuildContext context) async {
-    final controller = TextEditingController(text: '${store.maxSkillRank}');
     final value = await showDialog<int>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
-                title: const Text('设置技能最高重'),
-                content: TextField(
-                    controller: controller,
-                    autofocus: true,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: const InputDecoration(
-                        labelText: '最高重', helperText: '将影响全部重数筛选、统计和显示')),
-                actions: [
-                  TextButton(
-                      onPressed: () => Navigator.pop(dialogContext),
-                      child: const Text('取消')),
-                  FilledButton(
-                      onPressed: () {
-                        final rank = int.tryParse(controller.text);
-                        if (rank != null && rank > 0) {
-                          Navigator.pop(dialogContext, rank);
-                        }
-                      },
-                      child: const Text('保存'))
-                ]));
-    controller.dispose();
+        builder: (_) => _MaxSkillRankDialog(initialValue: store.maxSkillRank));
     if (value != null) store.setMaxSkillRank(value);
   }
 
@@ -4212,6 +4189,52 @@ class BossPage extends StatelessWidget {
                 ? '发现新的首领技能数据'
                 : '当前已是最新首领技能数据（版本 ${store.bossCatalogVersion}）'))));
   }
+}
+
+class _MaxSkillRankDialog extends StatefulWidget {
+  const _MaxSkillRankDialog({required this.initialValue});
+  final int initialValue;
+
+  @override
+  State<_MaxSkillRankDialog> createState() => _MaxSkillRankDialogState();
+}
+
+class _MaxSkillRankDialogState extends State<_MaxSkillRankDialog> {
+  late final TextEditingController controller;
+
+  @override
+  void initState() {
+    super.initState();
+    controller = TextEditingController(text: '${widget.initialValue}');
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+          title: const Text('设置技能最高重'),
+          content: TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(
+                  labelText: '最高重', helperText: '将影响全部重数筛选、统计和显示')),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('取消')),
+            FilledButton(
+                onPressed: () {
+                  final rank = int.tryParse(controller.text);
+                  if (rank != null && rank > 0) Navigator.pop(context, rank);
+                },
+                child: const Text('保存'))
+          ]);
 }
 
 class BossSkillTile extends StatelessWidget {

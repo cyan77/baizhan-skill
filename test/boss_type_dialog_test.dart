@@ -228,6 +228,21 @@ void main() {
     expect(store.bosses.map((boss) => boss.id), ['second', 'first']);
   });
 
+  testWidgets('closing max skill rank dialog disposes cleanly', (tester) async {
+    final store = SkillStore();
+    await tester.pumpWidget(MaterialApp(home: BossPage(store: store)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('最高重 10 重'));
+    await tester.pumpAndSettle();
+    expect(find.text('设置技能最高重'), findsOneWidget);
+
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(find.text('设置技能最高重'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('add character dialog lays out shared dropdowns cleanly',
       (tester) async {
     final store = SkillStore();
