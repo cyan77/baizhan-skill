@@ -99,6 +99,14 @@ String normalizeMind(String value) =>
     }[value] ??
     value;
 
+String currentWeekKey([DateTime? now]) {
+  final date = (now ?? DateTime.now()).toLocal();
+  final monday = DateTime(date.year, date.month, date.day)
+      .subtract(Duration(days: date.weekday - DateTime.monday));
+  String two(int value) => value.toString().padLeft(2, '0');
+  return '${monday.year}-${two(monday.month)}-${two(monday.day)}';
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final store = SkillStore();
@@ -271,6 +279,8 @@ class CharacterData {
       required this.mind,
       required this.position,
       required Map<String, int> levels,
+      this.swapPoints = 0,
+      this.weeklyCompletedWeek = '',
       this.archived = false})
       : levels = Map<String, int>.from(levels);
   final String id;
@@ -279,8 +289,11 @@ class CharacterData {
   String school;
   String mind;
   String position;
+  int swapPoints;
+  String weeklyCompletedWeek;
   final Map<String, int> levels;
   bool archived;
+  bool get weeklyCompleted => weeklyCompletedWeek == currentWeekKey();
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
@@ -288,6 +301,8 @@ class CharacterData {
         'school': school,
         'mind': mind,
         'position': position,
+        'swapPoints': swapPoints,
+        'weeklyCompletedWeek': weeklyCompletedWeek,
         'levels': levels,
         'archived': archived
       };
@@ -299,6 +314,9 @@ class CharacterData {
         school: normalizeSchool(json['school'] as String? ?? '未设置'),
         mind: normalizeMind(json['mind'] as String? ?? '未设置'),
         position: normalizePosition(json['position'] as String? ?? '输出'),
+        swapPoints:
+            ((json['swapPoints'] as num?)?.toInt() ?? 0).clamp(0, 1 << 31),
+        weeklyCompletedWeek: json['weeklyCompletedWeek'] as String? ?? '',
         levels: (json['levels'] as Map).map(
             (key, value) => MapEntry(key.toString(), (value as num).toInt())),
         archived: json['archived'] as bool? ?? false);
@@ -1309,6 +1327,8 @@ class SkillStore extends ChangeNotifier {
       required String school,
       required String mind,
       required String position,
+      int swapPoints = 0,
+      bool weeklyCompleted = false,
       int initialSkillLevel = 1,
       Map<String, int> skillLevelsByName = const {}}) {
     final character = CharacterData(
@@ -1318,6 +1338,8 @@ class SkillStore extends ChangeNotifier {
         school: normalizeSchool(school),
         mind: normalizeMind(mind),
         position: normalizePosition(position),
+        swapPoints: swapPoints.clamp(0, 1 << 31),
+        weeklyCompletedWeek: weeklyCompleted ? currentWeekKey() : '',
         levels: {});
     for (final boss in bosses)
       for (final skill in boss.skills) {
@@ -1372,12 +1394,22 @@ class SkillStore extends ChangeNotifier {
       required String gender,
       required String school,
       required String mind,
-      required String position}) {
+      required String position,
+      required int swapPoints,
+      required bool weeklyCompleted}) {
     character.name = name.trim();
     character.gender = gender;
     character.school = normalizeSchool(school);
     character.mind = normalizeMind(mind);
     character.position = normalizePosition(position);
+    character.swapPoints = swapPoints.clamp(0, 1 << 31);
+    character.weeklyCompletedWeek = weeklyCompleted ? currentWeekKey() : '';
+    _save();
+    notifyListeners();
+  }
+
+  void setWeeklyCompleted(CharacterData character, bool completed) {
+    character.weeklyCompletedWeek = completed ? currentWeekKey() : '';
     _save();
     notifyListeners();
   }
@@ -2290,12 +2322,18 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   bool syncing = false;
+  String cdFilter = '全部';
 
   SkillStore get store => widget.store;
 
   @override
   Widget build(BuildContext context) {
     final character = store.selectedCharacter;
+    final visibleCharacters = store.activeCharacters.where((item) {
+      if (cdFilter == '已完成') return item.weeklyCompleted;
+      if (cdFilter == '未完成') return !item.weeklyCompleted;
+      return true;
+    }).toList();
     return PageBody(
         title: '首页',
         action: Text(
@@ -2304,7 +2342,18 @@ class _HomePageState extends State<HomePage> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _syncStatusBar(context),
           const SizedBox(height: 14),
-          CharacterSwitcher(store: store),
+          Align(
+              alignment: Alignment.centerLeft,
+              child: _FilterDropdown<String>(
+                  value: cdFilter,
+                  values: const ['全部', '未完成', '已完成'],
+                  itemLabel: (value) => value == '全部' ? '全部本周 CD' : value,
+                  compactLabel: (value) => value == '全部' ? '本周 CD' : value,
+                  width: 170,
+                  onChanged: (value) =>
+                      setState(() => cdFilter = value ?? '全部'))),
+          const SizedBox(height: 10),
+          CharacterSwitcher(store: store, characters: visibleCharacters),
           const SizedBox(height: 14),
           CardShell(
               child: Row(children: [
@@ -2326,6 +2375,18 @@ class _HomePageState extends State<HomePage> {
                           : '当前查看：${character.name} · ${character.school} · ${character.mind}',
                       style: const TextStyle(color: muted, fontSize: 12))
                 ])),
+            if (character != null)
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                Checkbox(
+                    value: character.weeklyCompleted,
+                    onChanged: (value) =>
+                        store.setWeeklyCompleted(character, value ?? false)),
+                Text(character.weeklyCompleted ? '本周 CD 已完成' : '本周 CD 未完成',
+                    style: TextStyle(
+                        color: character.weeklyCompleted ? teal : muted,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12))
+              ])
           ])),
           const SizedBox(height: 18),
           if (character != null) ...[
@@ -2683,96 +2744,110 @@ class HomeBookNeeds extends StatelessWidget {
 }
 
 class CharacterSwitcher extends StatelessWidget {
-  const CharacterSwitcher({required this.store, this.onSelected, super.key});
+  const CharacterSwitcher(
+      {required this.store, this.onSelected, this.characters, super.key});
   final SkillStore store;
   final ValueChanged<String>? onSelected;
+  final List<CharacterData>? characters;
 
   @override
-  Widget build(BuildContext context) => SizedBox(
-      height: 82,
-      child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: store.activeCharacters.length + 1,
-          separatorBuilder: (_, __) => const SizedBox(width: 10),
-          itemBuilder: (context, index) {
-            if (index == store.activeCharacters.length) {
+  Widget build(BuildContext context) {
+    final visibleCharacters = characters ?? store.activeCharacters;
+    return SizedBox(
+        height: 82,
+        child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: visibleCharacters.length + 1,
+            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            itemBuilder: (context, index) {
+              if (index == visibleCharacters.length) {
+                return InkWell(
+                    onTap: () => showCharacterDialog(context, store),
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                        width: 128,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                            color: const Color(0xfff7f9f8),
+                            border: Border.all(color: teal),
+                            borderRadius: BorderRadius.circular(10)),
+                        child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.add, color: teal, size: 20),
+                              SizedBox(width: 6),
+                              Text('添加角色',
+                                  style: TextStyle(
+                                      color: teal,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700))
+                            ])));
+              }
+              final character = visibleCharacters[index];
+              final active = character.id == store.selectedCharacterId;
+              final completed = character.weeklyCompleted;
               return InkWell(
-                  onTap: () => showCharacterDialog(context, store),
+                  onTap: () {
+                    store.selectCharacter(character.id);
+                    onSelected?.call(character.id);
+                  },
+                  onDoubleTap: () =>
+                      showCharacterDialog(context, store, character: character),
                   borderRadius: BorderRadius.circular(10),
-                  child: Container(
-                      width: 128,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
+                      width: 166,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
                       decoration: BoxDecoration(
-                          color: const Color(0xfff7f9f8),
-                          border: Border.all(color: teal),
+                          color: completed
+                              ? const Color(0xffe2f3eb)
+                              : active
+                                  ? const Color(0xffedf7f3)
+                                  : const Color(0xfff7f9f8),
+                          border: Border.all(
+                              color: completed || active ? teal : line,
+                              width: completed ? 1.5 : 1),
                           borderRadius: BorderRadius.circular(10)),
-                      child: const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.add, color: teal, size: 20),
-                            SizedBox(width: 6),
-                            Text('添加角色',
-                                style: TextStyle(
-                                    color: teal,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w700))
-                          ])));
-            }
-            final character = store.activeCharacters[index];
-            final active = character.id == store.selectedCharacterId;
-            return InkWell(
-                onTap: () {
-                  store.selectCharacter(character.id);
-                  onSelected?.call(character.id);
-                },
-                onDoubleTap: () =>
-                    showCharacterDialog(context, store, character: character),
-                borderRadius: BorderRadius.circular(10),
-                child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 160),
-                    width: 166,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                        color: active
-                            ? const Color(0xffe1f1ea)
-                            : const Color(0xfff7f9f8),
-                        border: Border.all(color: active ? teal : line),
-                        borderRadius: BorderRadius.circular(10)),
-                    child: Row(children: [
-                      CircleAvatar(
-                          radius: 19,
-                          backgroundColor: active
-                              ? const Color(0xffcbe8dc)
-                              : const Color(0xffe5ece8),
-                          child: Text(
-                              character.name.isEmpty
-                                  ? '角'
-                                  : character.name.substring(0, 1),
-                              style: const TextStyle(
-                                  color: teal, fontWeight: FontWeight.w800))),
-                      const SizedBox(width: 8),
-                      Expanded(
-                          child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                            Text(character.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                    color: active ? teal : ink,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700)),
-                            const SizedBox(height: 3),
-                            Text('${character.mind} · ${character.position}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style:
-                                    const TextStyle(color: muted, fontSize: 10))
-                          ]))
-                    ])));
-          }));
+                      child: Row(children: [
+                        CircleAvatar(
+                            radius: 19,
+                            backgroundColor: active
+                                ? const Color(0xffcbe8dc)
+                                : const Color(0xffe5ece8),
+                            child: completed
+                                ? const Icon(Icons.check, color: teal, size: 21)
+                                : Text(
+                                    character.name.isEmpty
+                                        ? '角'
+                                        : character.name.substring(0, 1),
+                                    style: const TextStyle(
+                                        color: teal,
+                                        fontWeight: FontWeight.w800))),
+                        const SizedBox(width: 8),
+                        Expanded(
+                            child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                              Text(character.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      color: active ? teal : ink,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700)),
+                              const SizedBox(height: 3),
+                              Text(
+                                  '${character.school} · ${character.mind} · ${character.swapPoints} 换将点',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      color: muted, fontSize: 10))
+                            ]))
+                      ])));
+            }));
+  }
 }
 
 class CharacterManagementPage extends StatelessWidget {
@@ -5292,10 +5367,14 @@ Future<void> showDeleteBossDialog(
 Future<void> showCharacterDialog(BuildContext context, SkillStore store,
     {CharacterData? character}) async {
   final name = TextEditingController(text: character?.name ?? '');
+  final swapPoints =
+      TextEditingController(text: '${character?.swapPoints ?? 0}');
   var gender = character?.gender ?? '女性';
   var school = normalizeSchool(character?.school ?? '未设置');
   var mind = normalizeMind(character?.mind ?? '未设置');
   var position = normalizePosition(character?.position ?? '输出');
+  var weeklyCompleted = character?.weeklyCompleted ?? false;
+  String? swapPointsError;
   final initialMinds = schoolMindPositions[school];
   if (initialMinds != null) {
     if (!initialMinds.containsKey(mind)) mind = initialMinds.keys.first;
@@ -5366,6 +5445,29 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                               itemLabel: (value) => value,
                               onChanged: (value) =>
                                   setState(() => position = value ?? position)),
+                          SizedBox(
+                              width: 215,
+                              child: TextField(
+                                  controller: swapPoints,
+                                  keyboardType: TextInputType.number,
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly
+                                  ],
+                                  onChanged: (_) =>
+                                      setState(() => swapPointsError = null),
+                                  decoration: InputDecoration(
+                                      labelText: '换将点',
+                                      errorText: swapPointsError))),
+                          SizedBox(
+                              width: 215,
+                              child: CheckboxListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  value: weeklyCompleted,
+                                  title: const Text('本周 CD 已完成'),
+                                  controlAffinity:
+                                      ListTileControlAffinity.leading,
+                                  onChanged: (value) => setState(
+                                      () => weeklyCompleted = value ?? false))),
                           if (character == null)
                             _LabeledFilterDropdown<int>(
                                 label: '全部技能重数',
@@ -5552,6 +5654,14 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                     FilledButton(
                         onPressed: importing == null
                             ? () {
+                                final parsedSwapPoints =
+                                    int.tryParse(swapPoints.text);
+                                if (parsedSwapPoints == null ||
+                                    parsedSwapPoints < 0) {
+                                  setState(
+                                      () => swapPointsError = '请输入大于等于 0 的整数');
+                                  return;
+                                }
                                 if (character == null) {
                                   store.addCharacter(
                                       name: name.text,
@@ -5559,6 +5669,8 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                                       school: school,
                                       mind: mind,
                                       position: position,
+                                      swapPoints: parsedSwapPoints,
+                                      weeklyCompleted: weeklyCompleted,
                                       initialSkillLevel: initialSkillLevel,
                                       skillLevelsByName: importedLevels);
                                 } else {
@@ -5567,7 +5679,9 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                                       gender: gender,
                                       school: school,
                                       mind: mind,
-                                      position: position);
+                                      position: position,
+                                      swapPoints: parsedSwapPoints,
+                                      weeklyCompleted: weeklyCompleted);
                                 }
                                 Navigator.pop(context);
                               }
@@ -5575,6 +5689,7 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                         child: const Text('保存'))
                   ])));
   name.dispose();
+  swapPoints.dispose();
 }
 
 Future<CharacterExcelData?> pickCharacterExcelData(int maxSkillRank) async {

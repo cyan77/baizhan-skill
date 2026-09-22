@@ -5,6 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('weekly CD uses Monday as the start of each week', () {
+    expect(currentWeekKey(DateTime(2026, 9, 21)), '2026-09-21');
+    expect(currentWeekKey(DateTime(2026, 9, 27)), '2026-09-21');
+    expect(currentWeekKey(DateTime(2026, 9, 28)), '2026-09-28');
+  });
+
   test('Boss collection progress uses the next rank target', () {
     final store = SkillStore();
     final boss = Boss(
@@ -263,11 +269,14 @@ void main() {
     expect(find.text('门派'), findsOneWidget);
     expect(find.text('心法'), findsOneWidget);
     expect(find.text('定位'), findsOneWidget);
+    expect(find.text('换将点'), findsOneWidget);
+    expect(find.text('本周 CD 已完成'), findsOneWidget);
     expect(find.text('全部技能重数'), findsOneWidget);
     expect(find.text('导入 Excel'), findsOneWidget);
     expect(find.text('导入图片'), findsOneWidget);
     expect(find.text('预览技能与属性'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('预览技能与属性'));
     await tester.tap(find.text('预览技能与属性'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
