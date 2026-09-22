@@ -1,9 +1,8 @@
 {
   "type": "baizhan-bosses",
-  "version": 1,
-  "updatedAt": "2026-09-21T13:34:07.938699Z",
-  "notes": "首领技能基础数据",
-  "maxSkillRank": 10,
+  "version": 2,
+  "updatedAt": "2026-09-22T14:16:00.000000Z",
+  "notes": "Boss 技能基础数据",
   "bosses": [
     {
       "id": "boss-0",
@@ -1009,6 +1008,35 @@
           "id": "boss-32-skill-male-bear",
           "name": "蛮熊碎颅击",
           "tradable": false
+        }
+      ]
+    },
+    {
+      "id": "boss-33",
+      "name": "罗伊客",
+      "type": "精英",
+      "spirit": 320.0,
+      "stamina": 480.0,
+      "skills": [
+        {
+          "id": "boss-33-skill-0",
+          "name": "狂澜摧城",
+          "tradable": false
+        },
+        {
+          "id": "boss-33-skill-1",
+          "name": "横绝八荒",
+          "tradable": false
+        },
+        {
+          "id": "boss-33-skill-2",
+          "name": "凝锋斩",
+          "tradable": false
+        },
+        {
+          "id": "boss-33-skill-3",
+          "name": "截影推山",
+          "tradable": true
         }
       ]
     }
