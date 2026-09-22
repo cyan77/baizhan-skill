@@ -14,7 +14,7 @@ class CharacterExcelData {
 }
 
 class CharacterExcelParser {
-  static CharacterExcelData parse(Uint8List bytes) {
+  static CharacterExcelData parse(Uint8List bytes, {int maxSkillRank = 10}) {
     final archive = ZipDecoder().decodeBytes(bytes);
     String readEntry(String path) {
       final file = archive.findFile(path);
@@ -91,7 +91,7 @@ class CharacterExcelParser {
         final skillName = cells['$column$nameRow']?.trim() ?? '';
         if (skillName.isEmpty) continue;
         final parsed = int.tryParse(cells['$column${nameRow + 1}'] ?? '');
-        levels[skillName] = (parsed ?? 1).clamp(1, 10).toInt();
+        levels[skillName] = (parsed ?? 1).clamp(1, maxSkillRank).toInt();
       }
     }
     return CharacterExcelData(

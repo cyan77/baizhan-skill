@@ -2,7 +2,8 @@
   "type": "baizhan-bosses",
   "version": 1,
   "updatedAt": "2026-09-21T13:34:07.938699Z",
-  "notes": "Boss 技能基础数据",
+  "notes": "首领技能基础数据",
+  "maxSkillRank": 10,
   "bosses": [
     {
       "id": "boss-0",

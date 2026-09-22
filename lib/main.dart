@@ -179,11 +179,12 @@ class BossCollectionProgress {
 BossCollectionProgress bossCollectionProgress(
     SkillStore store, CharacterData character, Boss boss) {
   return bossCollectionProgressForLevels(boss, character.gender,
-      (skill) => store.level(character.id, skill.id).clamp(0, 10));
+      (skill) => store.level(character.id, skill.id), store.maxSkillRank);
 }
 
 BossCollectionProgress bossCollectionProgressForLevels(
-    Boss boss, String gender, int Function(Skill skill) levelFor) {
+    Boss boss, String gender, int Function(Skill skill) levelFor,
+    [int maxSkillRank = 10]) {
   final skills = boss.skills
       .where((skill) => skillAppliesToGender(skill, gender))
       .toList();
@@ -191,9 +192,10 @@ BossCollectionProgress bossCollectionProgressForLevels(
     return const BossCollectionProgress(
         completedRank: 0, strategyRank: 0, collectedSkills: 0, totalSkills: 0);
   }
-  final levels = skills.map((skill) => levelFor(skill).clamp(0, 10)).toList();
+  final levels =
+      skills.map((skill) => levelFor(skill).clamp(0, maxSkillRank)).toList();
   final completedRank = levels.reduce(math.min);
-  final strategyRank = math.min(10, completedRank + 1);
+  final strategyRank = math.min(maxSkillRank, completedRank + 1);
   final collectedSkills = levels.where((level) => level >= strategyRank).length;
   return BossCollectionProgress(
       completedRank: completedRank,
@@ -202,19 +204,22 @@ BossCollectionProgress bossCollectionProgressForLevels(
       totalSkills: skills.length);
 }
 
-String chineseRankLabel(int rank) => const [
-      '未开始',
-      '一重',
-      '二重',
-      '三重',
-      '四重',
-      '五重',
-      '六重',
-      '七重',
-      '八重',
-      '九重',
-      '十重'
-    ][rank.clamp(0, 10)];
+String chineseRankLabel(int rank) {
+  if (rank > 10) return '$rank 重';
+  return const [
+    '未开始',
+    '一重',
+    '二重',
+    '三重',
+    '四重',
+    '五重',
+    '六重',
+    '七重',
+    '八重',
+    '九重',
+    '十重'
+  ][rank.clamp(0, 10)];
+}
 
 String managementSkillName(Skill skill) =>
     const {'剑心通明': '剑心通明/巨猿劈山', '帝骖龙翔': '帝骖龙翔/顽抗'}[skill.name] ?? skill.name;
@@ -303,8 +308,11 @@ class SkillStore extends ChangeNotifier {
   final List<Boss> bosses = [];
   final List<String> importantSkills = [];
   final List<String> purpleSkills = [];
+  int maxSkillRank = 10;
   String selectedCharacterId = '';
   int page = 0;
+  String? pendingSkillPageCharacterId;
+  int? pendingSkillPageMaxRank;
   static const storageKey = 'battle_skill_data_v3';
   static const bossCatalogVersionKey = 'boss_catalog_version';
   SharedPreferences? _prefs;
@@ -414,7 +422,8 @@ class SkillStore extends ChangeNotifier {
               previousSkillsByName[skill.name.trim().toLowerCase()];
           nextLevels[skill.id] = previous == null
               ? 1
-              : (character.levels[previous.id] ?? 1).clamp(1, 10);
+              : (character.levels[previous.id] ?? 1)
+                  .clamp(1, catalog.maxSkillRank);
         }
       }
       character.levels
@@ -425,6 +434,7 @@ class SkillStore extends ChangeNotifier {
     bosses
       ..clear()
       ..addAll(importedBosses);
+    maxSkillRank = catalog.maxSkillRank;
     purpleSkills
       ..clear()
       ..addAll(bosses
@@ -492,6 +502,7 @@ class SkillStore extends ChangeNotifier {
   }
 
   void _restore(Map<String, dynamic> data) {
+    maxSkillRank = ((data['maxSkillRank'] as num?)?.toInt() ?? 10).clamp(1, 99);
     characters.addAll((data['characters'] as List).map((item) =>
         CharacterData.fromJson(Map<String, dynamic>.from(item as Map))));
     bosses.addAll((data['bosses'] as List)
@@ -545,6 +556,7 @@ class SkillStore extends ChangeNotifier {
         'bosses': bosses.map((item) => item.toJson()).toList(),
         'importantSkills': importantSkills,
         'purpleSkills': purpleSkills,
+        'maxSkillRank': maxSkillRank,
         'selectedCharacterId': selectedCharacterId,
         'page': page
       };
@@ -834,16 +846,34 @@ class SkillStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  void openSkillPage(int targetPage, String characterId) {
+    pendingSkillPageCharacterId = characterId;
+    pendingSkillPageMaxRank = math.max(1, maxSkillRank - 1);
+    setPage(targetPage);
+  }
+
+  void setMaxSkillRank(int value) {
+    final normalized = value.clamp(1, 99).toInt();
+    if (normalized == maxSkillRank) return;
+    maxSkillRank = normalized;
+    for (final character in characters) {
+      character.levels
+          .updateAll((_, level) => level.clamp(0, maxSkillRank).toInt());
+    }
+    _save();
+    notifyListeners();
+  }
+
   void setLevel(String skillId, int value) {
     final character = selectedCharacter;
     if (character == null) return;
-    character.levels[skillId] = value.clamp(0, 10).toInt();
+    character.levels[skillId] = value.clamp(0, maxSkillRank).toInt();
     _save();
     notifyListeners();
   }
 
   void setLevelForAllCharacters(String skillId, int value) {
-    final normalized = value.clamp(0, 10).toInt();
+    final normalized = value.clamp(0, maxSkillRank).toInt();
     for (final character in characters) {
       character.levels[skillId] = normalized;
     }
@@ -852,7 +882,7 @@ class SkillStore extends ChangeNotifier {
   }
 
   void setAllSkillLevels(int value, {String? characterId}) {
-    final normalized = value.clamp(1, 10).toInt();
+    final normalized = value.clamp(1, maxSkillRank).toInt();
     final targets = characterId == null
         ? characters
         : characters.where((character) => character.id == characterId);
@@ -878,8 +908,12 @@ class SkillStore extends ChangeNotifier {
     return values.reduce((a, b) => a < b ? a : b);
   }
 
-  double _multiplier(int rank) =>
-      const [0, 1, 2, 3, 4, 5, 7, 10, 15, 22.5, 33.75][rank].toDouble();
+  double _multiplier(int rank) {
+    const values = [0, 1, 2, 3, 4, 5, 7, 10, 15, 22.5, 33.75];
+    if (rank < values.length) return values[rank].toDouble();
+    return (values.last * math.pow(1.5, rank - 10)).toDouble();
+  }
+
   double stat(String characterId, bool spirit) {
     final character = _findCharacter(characterId);
     if (character == null) return 0;
@@ -914,7 +948,7 @@ class SkillStore extends ChangeNotifier {
       12000,
       14000
     ];
-    return List<int>.generate(10, (index) => index + 1)
+    return List<int>.generate(math.min(maxSkillRank, 10), (index) => index + 1)
         .where((value) => values.where((level) => level >= value).length > 2)
         .fold<double>(0, (sum, value) => sum + bonus[value]);
   }
@@ -1149,6 +1183,7 @@ class SkillStore extends ChangeNotifier {
       'version': bossCatalogVersion + 1,
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
       'notes': '首领技能数据更新',
+      'maxSkillRank': maxSkillRank,
       'bosses': bosses.map((boss) => boss.toJson()).toList()
     };
     final bytes = Uint8List.fromList(utf8.encode(jsonEncode(data)));
@@ -1172,6 +1207,9 @@ class SkillStore extends ChangeNotifier {
       throw const FormatException('文件中没有首领数据');
     }
 
+    final importedMaxRank = (data['maxSkillRank'] as num?)?.toInt();
+    final previousMaxRank = maxSkillRank;
+    if (importedMaxRank != null) setMaxSkillRank(importedMaxRank);
     var bossesAdded = 0;
     var skillsAdded = 0;
     final importStamp = DateTime.now().microsecondsSinceEpoch;
@@ -1247,7 +1285,7 @@ class SkillStore extends ChangeNotifier {
       }
     }
 
-    if (bossesAdded > 0 || skillsAdded > 0) {
+    if (bossesAdded > 0 || skillsAdded > 0 || previousMaxRank != maxSkillRank) {
       _save();
       notifyListeners();
     }
@@ -1276,7 +1314,7 @@ class SkillStore extends ChangeNotifier {
             (skillLevelsByName[skillNameForGender(skill, gender)] ??
                     skillLevelsByName[skill.name] ??
                     initialSkillLevel)
-                .clamp(1, 10)
+                .clamp(1, maxSkillRank)
                 .toInt();
       }
     characters.add(character);
@@ -1306,7 +1344,8 @@ class SkillStore extends ChangeNotifier {
         final importedLevel =
             data.skillLevels[skillNameForGender(skill, data.gender)] ??
                 data.skillLevels[skill.name];
-        character.levels[skill.id] = importedLevel ?? 1;
+        character.levels[skill.id] =
+            (importedLevel ?? 1).clamp(1, maxSkillRank).toInt();
         if (importedLevel != null) matched++;
       }
     }
@@ -1428,7 +1467,7 @@ class BattleSkillsApp extends StatelessWidget {
 class Shell extends StatelessWidget {
   const Shell({required this.store, super.key});
   final SkillStore store;
-  static const pageTitles = ['首页', '重要技能汇总', '紫色技能汇总', '所有技能汇总', '设置'];
+  static const pageTitles = ['首页', '重要技能汇总', '可交易技能汇总', '所有技能汇总', '设置'];
   @override
   Widget build(BuildContext context) => LayoutBuilder(
         builder: (context, constraints) {
@@ -1465,7 +1504,7 @@ class Shell extends StatelessWidget {
                       NavigationDestination(
                           icon: Icon(Icons.auto_awesome_outlined),
                           selectedIcon: Icon(Icons.auto_awesome),
-                          label: '紫书'),
+                          label: '可交易'),
                       NavigationDestination(
                           icon: Icon(Icons.account_tree_outlined),
                           selectedIcon: Icon(Icons.account_tree),
@@ -1591,7 +1630,7 @@ class SideNav extends StatelessWidget {
         ...[
           ('首页', Icons.dashboard_outlined),
           ('重要技能', Icons.star_border),
-          ('紫书统计', Icons.auto_awesome_outlined),
+          ('可交易技能', Icons.auto_awesome_outlined),
           ('所有技能', Icons.account_tree_outlined),
           ('设置', Icons.settings_outlined)
         ].asMap().entries.map((entry) => NavItem(
@@ -1752,7 +1791,7 @@ double _filterItemWidth(double maxWidth, int itemCount) {
   return math.min(width, 280.0);
 }
 
-Widget _fourCardRow(List<Widget> cards, double maxWidth) {
+Widget _equalCardRow(List<Widget> cards, double maxWidth) {
   return SizedBox(
       width: maxWidth,
       child: Row(
@@ -2239,7 +2278,6 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  bool showExistingSkills = false;
   bool syncing = false;
 
   SkillStore get store => widget.store;
@@ -2277,15 +2315,21 @@ class _HomePageState extends State<HomePage> {
                           : '当前查看：${character.name} · ${character.school} · ${character.mind}',
                       style: const TextStyle(color: muted, fontSize: 12))
                 ])),
-            OutlinedButton.icon(
-                onPressed: () => store.setPage(3),
-                icon: const Icon(Icons.groups_outlined, size: 17),
-                label: const Text('进入所有技能'))
           ])),
           const SizedBox(height: 18),
           if (character != null) ...[
             LayoutBuilder(builder: (context, constraints) {
-              final cards = [
+              final allSkills = store.bosses
+                  .expand((boss) => boss.skills)
+                  .where(
+                      (skill) => skillAppliesToGender(skill, character.gender))
+                  .toList();
+              int completed(Iterable<String> names) => names
+                  .where((name) =>
+                      store.skillLevelForName(character.id, name) >=
+                      store.maxSkillRank)
+                  .length;
+              final firstRow = [
                 MetricCard(
                     width: double.infinity,
                     height: 120,
@@ -2300,23 +2344,43 @@ class _HomePageState extends State<HomePage> {
                     value: formatNumber(store.stat(character.id, false)),
                     accent: const Color(0xff69a991),
                     icon: Icons.shield_outlined),
+                HomeBookNeeds(store: store, character: character, height: 120)
+              ];
+              final secondRow = [
                 MetricCard(
                     width: double.infinity,
                     height: 120,
-                    label: '现有技能数量',
+                    label: '重要技能收集进度',
                     value:
-                        '${character.levels.values.where((value) => value > 0).length}',
+                        '${completed(store.importantSkills)}/${store.importantSkills.length}',
+                    accent: teal,
+                    icon: Icons.star_outline,
+                    onTap: () => store.openSkillPage(1, character.id)),
+                MetricCard(
+                    width: double.infinity,
+                    height: 120,
+                    label: '可交易技能收集进度',
+                    value:
+                        '${completed(store.purpleSkills)}/${store.purpleSkills.length}',
                     accent: purple,
+                    icon: Icons.auto_awesome_outlined,
+                    onTap: () => store.openSkillPage(2, character.id)),
+                MetricCard(
+                    width: double.infinity,
+                    height: 120,
+                    label: '现有技能收集进度',
+                    value:
+                        '${allSkills.where((skill) => store.level(character.id, skill.id) >= store.maxSkillRank).length}/${allSkills.length}',
+                    accent: const Color(0xff69a991),
                     icon: Icons.menu_book_outlined,
-                    onTap: () => setState(
-                        () => showExistingSkills = !showExistingSkills)),
-                HomeBookNeeds(store: store, character: character, height: 120)
+                    onTap: () => store.openSkillPage(3, character.id))
               ];
-              return _fourCardRow(cards, constraints.maxWidth);
+              return Column(children: [
+                _equalCardRow(firstRow, constraints.maxWidth),
+                const SizedBox(height: 12),
+                _equalCardRow(secondRow, constraints.maxWidth)
+              ]);
             }),
-            const SizedBox(height: 14),
-            if (showExistingSkills)
-              ExistingSkillsPanel(store: store, character: character),
             const SizedBox(height: 2),
           ]
         ]));
@@ -2445,7 +2509,11 @@ class _ExistingSkillsPanelState extends State<ExistingSkillsPanel> {
                   compactHint: '首领'),
               _FilterDropdown<int>(
                   value: maxRank,
-                  values: [0, ...List.generate(10, (index) => 10 - index)],
+                  values: [
+                    0,
+                    ...List.generate(store.maxSkillRank,
+                        (index) => store.maxSkillRank - index)
+                  ],
                   itemLabel: (value) => value == 0 ? '全部重数' : '$value 重及以下',
                   compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
                   width: width,
@@ -3057,7 +3125,7 @@ class OverviewPage extends StatelessWidget {
               accent: purple,
               icon: Icons.workspace_premium_outlined)
         ];
-        return _fourCardRow(cards, constraints.maxWidth);
+        return _equalCardRow(cards, constraints.maxWidth);
       }),
       const SizedBox(height: 22),
       compact
@@ -3349,7 +3417,6 @@ class SkillSummaryFilters extends StatefulWidget {
 
 class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
   final skillQuery = TextEditingController();
-  final bossQuery = TextEditingController();
   String characterId = 'all';
   int maxRank = 0;
 
@@ -3357,7 +3424,10 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
   void initState() {
     super.initState();
     skillQuery.addListener(_onSkillQueryChanged);
-    bossQuery.addListener(_onSkillQueryChanged);
+    characterId = widget.store.pendingSkillPageCharacterId ?? 'all';
+    maxRank = widget.store.pendingSkillPageMaxRank ?? 0;
+    widget.store.pendingSkillPageCharacterId = null;
+    widget.store.pendingSkillPageMaxRank = null;
   }
 
   void _onSkillQueryChanged() => setState(() {});
@@ -3365,9 +3435,7 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
   @override
   void dispose() {
     skillQuery.removeListener(_onSkillQueryChanged);
-    bossQuery.removeListener(_onSkillQueryChanged);
     skillQuery.dispose();
-    bossQuery.dispose();
     super.dispose();
   }
 
@@ -3377,20 +3445,14 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
 
   List<String> get filteredSkills {
     final query = skillQuery.text.trim().toLowerCase();
-    final bossText = bossQuery.text.trim().toLowerCase();
     final characters = filteredCharacters;
     return widget.skillNames.where((name) {
-      final matchesBoss = bossText.isEmpty ||
-          widget.store.bosses.any((boss) =>
-              boss.name.toLowerCase().contains(bossText) &&
-              boss.skills.any((skill) => skill.name == name));
       final matchesRank = maxRank == 0 ||
           characters.any((character) {
             final rank = widget.store.skillLevelForName(character.id, name);
             return rank > 0 && rank <= maxRank;
           });
       return (query.isEmpty || name.toLowerCase().contains(query)) &&
-          matchesBoss &&
           matchesRank;
     }).toList();
   }
@@ -3401,7 +3463,7 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
     final skills = filteredSkills;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       LayoutBuilder(builder: (context, constraints) {
-        final width = _filterItemWidth(constraints.maxWidth, 4);
+        final width = _filterItemWidth(constraints.maxWidth, 3);
         return Wrap(spacing: 10, runSpacing: 10, children: [
           _FilterDropdown<String>(
               value: characterId,
@@ -3423,12 +3485,6 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
               onChanged: (value) =>
                   setState(() => characterId = value ?? 'all')),
           _NameAutocomplete(
-              controller: bossQuery,
-              names: widget.store.bosses.map((boss) => boss.name).toList(),
-              width: width,
-              hint: '全部首领',
-              compactHint: '首领'),
-          _NameAutocomplete(
               controller: skillQuery,
               names: widget.skillNames,
               width: width,
@@ -3436,7 +3492,11 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
               compactHint: '技能'),
           _FilterDropdown<int>(
               value: maxRank,
-              values: [0, ...List.generate(10, (index) => 10 - index)],
+              values: [
+                0,
+                ...List.generate(widget.store.maxSkillRank,
+                    (index) => widget.store.maxSkillRank - index)
+              ],
               itemLabel: (value) => value == 0 ? '全部重数' : '$value 重及以下',
               compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
               width: width,
@@ -3500,7 +3560,7 @@ class PurplePage extends StatelessWidget {
         .length;
     return PageBody(
         title: '可交易技能统计',
-        action: Text('${store.purpleSkills.length} 个紫书技能',
+        action: Text('${store.purpleSkills.length} 个可交易技能',
             style: const TextStyle(color: purple, fontWeight: FontWeight.w700)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Padding(
@@ -3540,9 +3600,13 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
   void initState() {
     super.initState();
     bossQuery.addListener(_onBossQueryChanged);
-    if (widget.store.selectedCharacterId.isNotEmpty) {
-      characterId = widget.store.selectedCharacterId;
-    }
+    characterId = widget.store.pendingSkillPageCharacterId ??
+        (widget.store.selectedCharacterId.isNotEmpty
+            ? widget.store.selectedCharacterId
+            : 'all');
+    maxRank = widget.store.pendingSkillPageMaxRank ?? 0;
+    widget.store.pendingSkillPageCharacterId = null;
+    widget.store.pendingSkillPageMaxRank = null;
   }
 
   void _onBossQueryChanged() => setState(() {});
@@ -3584,7 +3648,8 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
                                 ? '全部角色的全部技能'
                                 : '当前角色的全部技能',
                             value: selectedRank,
-                            values: List.generate(10, (index) => 10 - index),
+                            values: List.generate(widget.store.maxSkillRank,
+                                (index) => widget.store.maxSkillRank - index),
                             itemLabel: (value) => '$value 重',
                             width: 260,
                             onChanged: (value) => setDialogState(
@@ -3637,7 +3702,11 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
                   compactHint: '首领'),
               _FilterDropdown<int>(
                   value: maxRank,
-                  values: [0, ...List.generate(10, (index) => 10 - index)],
+                  values: [
+                    0,
+                    ...List.generate(widget.store.maxSkillRank,
+                        (index) => widget.store.maxSkillRank - index)
+                  ],
                   itemLabel: (value) => value == 0 ? '全部重数' : '$value 重及以下',
                   compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
                   width: width,
@@ -3976,6 +4045,10 @@ class BossPage extends StatelessWidget {
               icon: const Icon(Icons.file_download_outlined, size: 17),
               label: const Text('增量导入')),
           OutlinedButton.icon(
+              onPressed: () => _setMaxRank(context),
+              icon: const Icon(Icons.vertical_align_top, size: 17),
+              label: Text('最高重 ${store.maxSkillRank} 重')),
+          OutlinedButton.icon(
               onPressed: store.bossCatalogCheckBusy
                   ? null
                   : () => _checkCatalog(context),
@@ -4061,6 +4134,36 @@ class BossPage extends StatelessWidget {
                       ])));
             })
       ]));
+
+  Future<void> _setMaxRank(BuildContext context) async {
+    final controller = TextEditingController(text: '${store.maxSkillRank}');
+    final value = await showDialog<int>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+                title: const Text('设置技能最高重'),
+                content: TextField(
+                    controller: controller,
+                    autofocus: true,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: const InputDecoration(
+                        labelText: '最高重', helperText: '将影响全部重数筛选、统计和显示')),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      child: const Text('取消')),
+                  FilledButton(
+                      onPressed: () {
+                        final rank = int.tryParse(controller.text);
+                        if (rank != null && rank > 0) {
+                          Navigator.pop(dialogContext, rank);
+                        }
+                      },
+                      child: const Text('保存'))
+                ]));
+    controller.dispose();
+    if (value != null) store.setMaxSkillRank(value);
+  }
 
   Future<void> _exportBosses(BuildContext context) async {
     final exported = await store.exportBosses();
@@ -4580,9 +4683,14 @@ class MetricCard extends StatelessWidget {
                   children: [
                     Row(children: [
                       Icon(icon, color: accent, size: 18),
-                      const Spacer(),
-                      Text(label,
-                          style: const TextStyle(color: muted, fontSize: 12))
+                      const SizedBox(width: 6),
+                      Expanded(
+                          child: Text(label,
+                              maxLines: 2,
+                              textAlign: TextAlign.right,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: muted, fontSize: 12, height: 1.15)))
                     ]),
                     const SizedBox(height: 14),
                     Text(value,
@@ -4737,7 +4845,8 @@ Future<void> showSkillDialog(
                           _FilterDropdown<int>(
                               value: selectedLevel,
                               values: [
-                                ...List.generate(10, (index) => 10 - index),
+                                ...List.generate(store.maxSkillRank,
+                                    (index) => store.maxSkillRank - index),
                                 0
                               ],
                               itemLabel: (value) =>
@@ -4756,7 +4865,7 @@ Future<void> showSkillDialog(
                                   style: TextStyle(
                                       fontSize: 13,
                                       fontWeight: FontWeight.w400)),
-                              subtitle: const Text('紫色显示并进入紫书统计',
+                              subtitle: const Text('紫色显示并进入可交易技能统计',
                                   style: TextStyle(color: muted, fontSize: 11)),
                               onChanged: (value) =>
                                   setState(() => tradable = value ?? false)),
@@ -4875,7 +4984,7 @@ Future<void> showAddSkillDialog(
                         contentPadding: EdgeInsets.zero,
                         value: tradable,
                         title: const Text('可交易技能'),
-                        subtitle: const Text('默认关闭，开启后会进入紫书统计'),
+                        subtitle: const Text('默认关闭，开启后会进入可交易技能统计'),
                         onChanged: (value) =>
                             setState(() => tradable = value ?? false))
                   ]),
@@ -5185,8 +5294,8 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                             _LabeledFilterDropdown<int>(
                                 label: '全部技能重数',
                                 value: initialSkillLevel,
-                                values:
-                                    List.generate(10, (index) => 10 - index),
+                                values: List.generate(store.maxSkillRank,
+                                    (index) => store.maxSkillRank - index),
                                 width: 215,
                                 itemLabel: (value) => '$value 重',
                                 onChanged: (value) => setState(() =>
@@ -5203,7 +5312,8 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                                             setState(() => importing = 'excel');
                                             try {
                                               final data =
-                                                  await pickCharacterExcelData();
+                                                  await pickCharacterExcelData(
+                                                      store.maxSkillRank);
                                               if (data == null) return;
                                               setState(() {
                                                 name.text = data.name;
@@ -5368,7 +5478,7 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
   name.dispose();
 }
 
-Future<CharacterExcelData?> pickCharacterExcelData() async {
+Future<CharacterExcelData?> pickCharacterExcelData(int maxSkillRank) async {
   try {
     final picked = await FilePicker.pickFiles(
         type: FileType.custom,
@@ -5379,7 +5489,7 @@ Future<CharacterExcelData?> pickCharacterExcelData() async {
     final bytes = file.bytes ??
         (file.path == null ? null : await File(file.path!).readAsBytes());
     if (bytes == null) throw const FormatException('无法读取 Excel 文件');
-    return CharacterExcelParser.parse(bytes);
+    return CharacterExcelParser.parse(bytes, maxSkillRank: maxSkillRank);
   } catch (_) {
     rethrow;
   }
@@ -5520,10 +5630,12 @@ Future<void> showCharacterDraftPreview(BuildContext context, SkillStore store,
   await showDialog<void>(
       context: context,
       builder: (context) => StatefulBuilder(builder: (context, setState) {
-            int levelFor(Skill skill) =>
-                (overrides[skill.name] ?? defaultLevel).clamp(1, 10).toInt();
+            int levelFor(Skill skill) => (overrides[skill.name] ?? defaultLevel)
+                .clamp(1, store.maxSkillRank)
+                .toInt();
             BossCollectionProgress progressFor(Boss boss) =>
-                bossCollectionProgressForLevels(boss, gender, levelFor);
+                bossCollectionProgressForLevels(
+                    boss, gender, levelFor, store.maxSkillRank);
             int rankFor(Boss boss) => progressFor(boss).completedRank;
             final bosses = [...store.bosses];
             if (strategyDescending != null) {
@@ -5744,6 +5856,8 @@ Future<void> showCharacterDraftPreview(BuildContext context, SkillStore store,
                                                   _DraftPreviewSkillRow(
                                                       skill: skill,
                                                       gender: gender,
+                                                      maxSkillRank:
+                                                          store.maxSkillRank,
                                                       value: levelFor(skill),
                                                       onChanged: (value) =>
                                                           setState(() =>
@@ -5765,11 +5879,13 @@ class _DraftPreviewSkillRow extends StatelessWidget {
   const _DraftPreviewSkillRow(
       {required this.skill,
       required this.gender,
+      required this.maxSkillRank,
       required this.value,
       required this.onChanged});
 
   final Skill skill;
   final String gender;
+  final int maxSkillRank;
   final int value;
   final ValueChanged<int> onChanged;
 
@@ -5794,7 +5910,8 @@ class _DraftPreviewSkillRow extends StatelessWidget {
             child: Center(
                 child: _FilterDropdown<int>(
                     value: value,
-                    values: List.generate(10, (index) => 10 - index),
+                    values: List.generate(
+                        maxSkillRank, (index) => maxSkillRank - index),
                     itemLabel: (rank) => '$rank 重',
                     width: 82,
                     onChanged: (rank) {

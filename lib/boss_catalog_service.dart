@@ -7,12 +7,14 @@ class RemoteBossCatalog {
     required this.updatedAt,
     required this.notes,
     required this.bosses,
+    this.maxSkillRank = 10,
   });
 
   final int version;
   final String updatedAt;
   final String notes;
   final List<dynamic> bosses;
+  final int maxSkillRank;
 
   factory RemoteBossCatalog.fromJson(Map<String, dynamic> json) {
     if (json['type'] != 'baizhan-bosses' || json['bosses'] is! List) {
@@ -23,6 +25,8 @@ class RemoteBossCatalog {
       updatedAt: json['updatedAt'] as String? ?? '',
       notes: json['notes'] as String? ?? '',
       bosses: json['bosses'] as List<dynamic>,
+      maxSkillRank:
+          ((json['maxSkillRank'] as num?)?.toInt() ?? 10).clamp(1, 99),
     );
   }
 }
