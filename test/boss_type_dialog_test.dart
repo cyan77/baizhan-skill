@@ -5,6 +5,79 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('Boss collection progress uses the next rank target', () {
+    final store = SkillStore();
+    final boss = Boss(
+        id: 'progress-boss',
+        name: '进度 Boss',
+        spirit: 240,
+        stamina: 560,
+        skills: List.generate(
+            4, (index) => Skill(id: 'progress-$index', name: '技能$index')));
+    final character = CharacterData(
+        id: 'progress-character',
+        name: '进度角色',
+        gender: '女性',
+        school: '未设置',
+        mind: '未设置',
+        position: 'dps',
+        levels: const {
+          'progress-0': 8,
+          'progress-1': 8,
+          'progress-2': 9,
+          'progress-3': 10
+        });
+    store.bosses.add(boss);
+    store.characters.add(character);
+
+    final progress = bossCollectionProgress(store, character, boss);
+    expect(progress.completedRank, 8);
+    expect(progress.strategyRank, 9);
+    expect(progress.collectedSkills, 2);
+    expect(progress.totalSkills, 4);
+    expect(chineseRankLabel(progress.strategyRank), '九重');
+  });
+
+  testWidgets('all skills strategy header toggles Boss ordering',
+      (tester) async {
+    final store = SkillStore();
+    final highBoss = Boss(
+        id: 'high-boss',
+        name: '高进度首领',
+        spirit: 400,
+        stamina: 400,
+        skills: [Skill(id: 'high-skill', name: '高进度技能')]);
+    final lowBoss = Boss(
+        id: 'low-boss',
+        name: '低进度首领',
+        spirit: 400,
+        stamina: 400,
+        skills: [Skill(id: 'low-skill', name: '低进度技能')]);
+    final character = CharacterData(
+        id: 'sort-character',
+        name: '排序角色',
+        gender: '女性',
+        school: '未设置',
+        mind: '未设置',
+        position: 'dps',
+        levels: const {'high-skill': 9, 'low-skill': 7});
+    store.bosses.addAll([lowBoss, highBoss]);
+    store.characters.add(character);
+    store.selectedCharacterId = character.id;
+
+    await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: AllSkillsPage(store: store))));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.text('高进度首领')).dy,
+        lessThan(tester.getTopLeft(find.text('低进度首领')).dy));
+
+    await tester.tap(find.text('攻略进度'));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.text('低进度首领')).dy,
+        lessThan(tester.getTopLeft(find.text('高进度首领')).dy));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('home book needs fits inside a narrow fourth card',
       (tester) async {
     final store = SkillStore();
