@@ -3286,11 +3286,13 @@ class SkillMatrix extends StatelessWidget {
       required this.skillNames,
       this.accent = ink,
       this.characters,
+      this.onDeleteSkill,
       super.key});
   final SkillStore store;
   final List<String> skillNames;
   final Color accent;
   final List<CharacterData>? characters;
+  final ValueChanged<String>? onDeleteSkill;
 
   @override
   Widget build(BuildContext context) {
@@ -3317,18 +3319,31 @@ class SkillMatrix extends StatelessWidget {
             : managementSkillName(skill);
       }
 
-      Widget skillCell(String label, {bool header = false}) => _SkillMatrixCell(
-          width: skillColumnWidth,
-          height: header ? headerHeight : rowHeight,
-          header: header,
-          alignment: Alignment.centerLeft,
-          child: Text(label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  color: header ? muted : accent,
-                  fontSize: header ? 12 : 13,
-                  fontWeight: header ? FontWeight.w700 : FontWeight.w600)));
+      Widget skillCell(String label,
+              {bool header = false, String? skillName}) =>
+          _SkillMatrixCell(
+              width: skillColumnWidth,
+              height: header ? headerHeight : rowHeight,
+              header: header,
+              alignment: Alignment.centerLeft,
+              child: Row(children: [
+                Expanded(
+                    child: Text(label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: header ? muted : accent,
+                            fontSize: header ? 12 : 13,
+                            fontWeight:
+                                header ? FontWeight.w700 : FontWeight.w600))),
+                if (!header && skillName != null && onDeleteSkill != null)
+                  IconButton(
+                      tooltip: '移除重要技能',
+                      visualDensity: VisualDensity.compact,
+                      iconSize: 17,
+                      onPressed: () => onDeleteSkill!(skillName),
+                      icon: const Icon(Icons.close, color: muted))
+              ]));
 
       Widget characterHeader(CharacterData character) => _SkillMatrixCell(
           width: characterColumnWidth,
@@ -3347,7 +3362,8 @@ class SkillMatrix extends StatelessWidget {
           child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Column(children: [
               skillCell('技能名称', header: true),
-              ...skillNames.map((name) => skillCell(displaySkillLabel(name)))
+              ...skillNames.map(
+                  (name) => skillCell(displaySkillLabel(name), skillName: name))
             ]),
             Expanded(
                 child: SingleChildScrollView(
@@ -3406,10 +3422,12 @@ class SkillSummaryFilters extends StatefulWidget {
       {required this.store,
       required this.skillNames,
       required this.accent,
+      this.onDeleteSkill,
       super.key});
   final SkillStore store;
   final List<String> skillNames;
   final Color accent;
+  final ValueChanged<String>? onDeleteSkill;
 
   @override
   State<SkillSummaryFilters> createState() => _SkillSummaryFiltersState();
@@ -3519,7 +3537,8 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
             store: widget.store,
             skillNames: skills,
             accent: widget.accent,
-            characters: characters)
+            characters: characters,
+            onDeleteSkill: widget.onDeleteSkill)
     ]);
   }
 }
@@ -3541,7 +3560,11 @@ class ImportantPage extends StatelessWidget {
             child: Text('重数随每个角色的技能页同步，仅用于查看，不在这里编辑。',
                 style: TextStyle(color: muted, fontSize: 12))),
         SkillSummaryFilters(
-            store: store, skillNames: store.importantSkills, accent: ink)
+            store: store,
+            skillNames: store.importantSkills,
+            accent: ink,
+            onDeleteSkill: (name) =>
+                showRemoveImportantSkillDialog(context, store, name))
       ]));
 }
 
@@ -4963,6 +4986,24 @@ Future<void> showImportantDialog(BuildContext context, SkillStore store) async {
                         child: const Text('添加'))
                   ])));
   controller.dispose();
+}
+
+Future<void> showRemoveImportantSkillDialog(
+    BuildContext context, SkillStore store, String skillName) async {
+  final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+              title: const Text('移除重要技能'),
+              content: Text('确定将「$skillName」从重要技能中移除吗？\n不会删除首领技能或角色重数。'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('取消')),
+                FilledButton(
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    child: const Text('移除'))
+              ]));
+  if (confirmed == true) store.removeImportantSkill(skillName);
 }
 
 Future<void> showAddSkillDialog(
