@@ -26,67 +26,78 @@ const gold = Color(0xffb56a18);
 
 const schoolOptions = [
   '未设置',
-  '万花',
   '七秀',
-  '少林',
-  '天策',
-  '纯阳',
-  '藏剑',
+  '万花',
   '五毒',
-  '唐门',
-  '明教',
-  '丐帮',
-  '苍云',
   '长歌',
+  '药宗',
+  '天策',
+  '少林',
+  '明教',
+  '苍云',
+  '纯阳',
+  '唐门',
+  '藏剑',
+  '丐帮',
   '霸刀',
   '蓬莱',
-  '衍天宗',
-  '药宗',
+  '凌雪',
+  '衍天',
   '刀宗',
-  '凌雪阁',
-  '无方',
-  '北天药宗'
+  '万灵',
+  '段氏',
+  '无相'
 ];
 
-const mindOptions = [
-  '未设置',
-  '花间游',
-  '离经易道',
-  '冰心诀',
-  '云裳心经',
-  '易筋经',
-  '洗髓经',
-  '傲血战意',
-  '铁牢律',
-  '太虚剑意',
-  '紫霞功',
-  '问水诀',
-  '山居剑意',
-  '毒经',
-  '补天诀',
-  '惊羽诀',
-  '天罗诡道',
-  '焚影圣诀',
-  '明尊琉璃体',
-  '笑尘诀',
-  '分山劲',
-  '铁骨衣',
-  '莫问',
-  '相知',
-  '北傲诀',
-  '凌海诀',
-  '蓬莱诀',
-  '隐龙诀',
-  '太玄经',
-  '孤锋诀',
-  '山海心诀',
-  '周天功',
-  '幽罗引',
-  '无方',
-  '灵素'
-];
+const schoolMindPositions = <String, Map<String, String>>{
+  '七秀': {'冰心诀': '输出', '云裳心经': '治疗'},
+  '万花': {'花间游': '输出', '离经易道': '治疗'},
+  '五毒': {'毒经': '输出', '补天诀': '治疗'},
+  '长歌': {'莫问': '输出', '相知': '治疗'},
+  '药宗': {'无方': '输出', '灵素': '治疗'},
+  '天策': {'傲血战意': '输出', '铁牢律': '防御'},
+  '少林': {'易筋经': '输出', '洗髓经': '防御'},
+  '明教': {'焚影圣诀': '输出', '明尊琉璃体': '防御'},
+  '苍云': {'分山劲': '输出', '铁骨衣': '防御'},
+  '纯阳': {'紫霞功': '输出', '太虚剑意': '输出'},
+  '唐门': {'天罗诡道': '输出', '惊羽诀': '输出'},
+  '藏剑': {'问水诀/山居剑意': '输出'},
+  '丐帮': {'笑尘诀': '输出'},
+  '霸刀': {'北傲诀': '输出'},
+  '蓬莱': {'凌海诀': '输出'},
+  '凌雪': {'隐龙诀': '输出'},
+  '衍天': {'太玄经': '输出'},
+  '刀宗': {'孤峰诀': '输出'},
+  '万灵': {'山海心诀': '输出'},
+  '段氏': {'周天功': '输出'},
+  '无相': {'幽罗引': '输出'},
+};
 
-const positionOptions = ['t', '奶', 'dps'];
+const positionOptions = ['输出', '治疗', '防御'];
+
+String normalizePosition(String value) =>
+    const {
+      'dps': '输出',
+      '奶': '治疗',
+      't': '防御',
+    }[value] ??
+    value;
+
+String normalizeSchool(String value) =>
+    const {
+      '衍天宗': '衍天',
+      '凌雪阁': '凌雪',
+      '北天药宗': '药宗',
+    }[value] ??
+    value;
+
+String normalizeMind(String value) =>
+    const {
+      '问水诀': '问水诀/山居剑意',
+      '山居剑意': '问水诀/山居剑意',
+      '孤锋诀': '孤峰诀',
+    }[value] ??
+    value;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -285,9 +296,9 @@ class CharacterData {
         id: json['id'] as String,
         name: json['name'] as String,
         gender: json['gender'] as String? ?? '女性',
-        school: json['school'] as String? ?? '未设置',
-        mind: json['mind'] as String? ?? '未设置',
-        position: json['position'] as String? ?? 'dps',
+        school: normalizeSchool(json['school'] as String? ?? '未设置'),
+        mind: normalizeMind(json['mind'] as String? ?? '未设置'),
+        position: normalizePosition(json['position'] as String? ?? '输出'),
         levels: (json['levels'] as Map).map(
             (key, value) => MapEntry(key.toString(), (value as num).toInt())),
         archived: json['archived'] as bool? ?? false);
@@ -490,7 +501,7 @@ class SkillStore extends ChangeNotifier {
           gender: isFemale ? '女性' : '男性',
           school: isFemale ? '万花' : '天策',
           mind: isFemale ? '花间游' : '傲血战意',
-          position: 'dps',
+          position: '输出',
           levels: levels));
       if (i == 1) break;
     }
@@ -1304,9 +1315,9 @@ class SkillStore extends ChangeNotifier {
         id: 'character-${DateTime.now().microsecondsSinceEpoch}',
         name: name.trim(),
         gender: gender,
-        school: school,
-        mind: mind,
-        position: position,
+        school: normalizeSchool(school),
+        mind: normalizeMind(mind),
+        position: normalizePosition(position),
         levels: {});
     for (final boss in bosses)
       for (final skill in boss.skills) {
@@ -1333,7 +1344,7 @@ class SkillStore extends ChangeNotifier {
         gender: data.gender,
         school: '未设置',
         mind: '未设置',
-        position: 'dps',
+        position: '输出',
         levels: {});
     character.name = data.name.trim();
     character.gender = data.gender;
@@ -1364,9 +1375,9 @@ class SkillStore extends ChangeNotifier {
       required String position}) {
     character.name = name.trim();
     character.gender = gender;
-    character.school = school;
-    character.mind = mind;
-    character.position = position;
+    character.school = normalizeSchool(school);
+    character.mind = normalizeMind(mind);
+    character.position = normalizePosition(position);
     _save();
     notifyListeners();
   }
@@ -5259,9 +5270,17 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
     {CharacterData? character}) async {
   final name = TextEditingController(text: character?.name ?? '');
   var gender = character?.gender ?? '女性';
-  var school = character?.school ?? '未设置';
-  var mind = character?.mind ?? '未设置';
-  var position = character?.position ?? 'dps';
+  var school = normalizeSchool(character?.school ?? '未设置');
+  var mind = normalizeMind(character?.mind ?? '未设置');
+  var position = normalizePosition(character?.position ?? '输出');
+  final initialMinds = schoolMindPositions[school];
+  if (initialMinds != null) {
+    if (!initialMinds.containsKey(mind)) mind = initialMinds.keys.first;
+    position = initialMinds[mind]!;
+  } else {
+    school = '未设置';
+    mind = '未设置';
+  }
   var initialSkillLevel = 1;
   String? importing;
   final importedLevels = <String, int>{};
@@ -5294,20 +5313,32 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                               values: schoolOptions,
                               width: 215,
                               itemLabel: (value) => value,
-                              onChanged: (value) =>
-                                  setState(() => school = value ?? school)),
+                              onChanged: (value) => setState(() {
+                                    school = value ?? school;
+                                    final minds = schoolMindPositions[school];
+                                    mind = minds?.keys.firstOrNull ?? '未设置';
+                                    position = minds?[mind] ?? '输出';
+                                  })),
                           _LabeledFilterDropdown<String>(
                               label: '心法',
                               value: mind,
-                              values: mindOptions,
+                              values: school == '未设置'
+                                  ? const ['未设置']
+                                  : schoolMindPositions[school]!.keys.toList(),
                               width: 215,
                               itemLabel: (value) => value,
-                              onChanged: (value) =>
-                                  setState(() => mind = value ?? mind)),
+                              onChanged: (value) => setState(() {
+                                    mind = value ?? mind;
+                                    position = schoolMindPositions[school]
+                                            ?[mind] ??
+                                        position;
+                                  })),
                           _LabeledFilterDropdown<String>(
                               label: '定位',
                               value: position,
-                              values: positionOptions,
+                              values: school == '未设置' || mind == '未设置'
+                                  ? positionOptions
+                                  : [schoolMindPositions[school]![mind]!],
                               width: 215,
                               itemLabel: (value) => value,
                               onChanged: (value) =>
