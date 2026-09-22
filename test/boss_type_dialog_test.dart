@@ -5,6 +5,31 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('home book needs fits inside a narrow fourth card',
+      (tester) async {
+    final store = SkillStore();
+    final character = CharacterData(
+        id: 'narrow-home',
+        name: '测试角色',
+        gender: '女性',
+        school: '未设置',
+        mind: '未设置',
+        position: 'dps',
+        levels: const {'one': 1, 'two': 10});
+
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: Align(
+                alignment: Alignment.topLeft,
+                child: SizedBox(
+                    width: 136,
+                    child:
+                        HomeBookNeeds(store: store, character: character))))));
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('通本4'), findsOneWidget);
+  });
+
   testWidgets('editing a Boss type closes its menu and saves cleanly',
       (tester) async {
     final store = SkillStore();

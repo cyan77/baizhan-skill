@@ -2522,22 +2522,26 @@ class HomeBookNeeds extends StatelessWidget {
                 final itemWidth = (constraints.maxWidth - 8) / 2;
                 return Wrap(
                     spacing: 8,
-                    runSpacing: 6,
+                    runSpacing: 2,
                     children: needs.entries
                         .map((entry) => SizedBox(
                             width: itemWidth,
-                            child:
-                                Row(mainAxisSize: MainAxisSize.min, children: [
-                              Text(entry.key,
-                                  style: const TextStyle(
-                                      color: muted, fontSize: 11)),
-                              const SizedBox(width: 4),
-                              Text('${entry.value}',
-                                  style: const TextStyle(
-                                      color: ink,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w800))
-                            ])))
+                            child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(entry.key,
+                                      style: const TextStyle(
+                                          color: muted,
+                                          fontSize: 10,
+                                          height: 1.1)),
+                                  Text('${entry.value}',
+                                      style: const TextStyle(
+                                          color: ink,
+                                          fontSize: 14,
+                                          height: 1.15,
+                                          fontWeight: FontWeight.w800))
+                                ])))
                         .toList());
               })
             ])));
