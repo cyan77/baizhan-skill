@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <future>
 #include <stdexcept>
 #include <string>
@@ -49,8 +50,8 @@ EncodableList RecognizeText(const std::string& path) {
 
   const auto max_dimension =
       winrt::Windows::Media::Ocr::OcrEngine::MaxImageDimension();
-  if (bitmap.PixelWidth() > max_dimension ||
-      bitmap.PixelHeight() > max_dimension) {
+  if (static_cast<uint32_t>(bitmap.PixelWidth()) > max_dimension ||
+      static_cast<uint32_t>(bitmap.PixelHeight()) > max_dimension) {
     throw std::runtime_error("图片尺寸过大，无法进行文字识别");
   }
 
