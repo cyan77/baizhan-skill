@@ -2714,6 +2714,8 @@ class CharacterSwitcher extends StatelessWidget {
                   store.selectCharacter(character.id);
                   onSelected?.call(character.id);
                 },
+                onDoubleTap: () =>
+                    showCharacterDialog(context, store, character: character),
                 borderRadius: BorderRadius.circular(10),
                 child: AnimatedContainer(
                     duration: const Duration(milliseconds: 160),
@@ -2788,7 +2790,7 @@ class CharacterManagementPage extends StatelessWidget {
               label: const Text('添加角色'))
         ]),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('按角色管理独立的技能重数记录，点击角色进入所有技能筛选。',
+          const Text('按角色管理独立的技能重数记录，双击角色可编辑。',
               style: TextStyle(color: muted, fontSize: 12)),
           const SizedBox(height: 18),
           if (store.activeCharacters.isEmpty)
@@ -2810,17 +2812,15 @@ class CharacterManagementPage extends StatelessWidget {
                   final progress = levels.isEmpty
                       ? 0.0
                       : levels.fold<int>(0, (sum, value) => sum + value) /
-                          (levels.length * 10);
+                          (levels.length * store.maxSkillRank);
                   return DragTarget<String>(
                       onWillAcceptWithDetails: (details) =>
                           details.data != character.id,
                       onAcceptWithDetails: (details) =>
                           store.reorderCharacter(details.data, character.id),
                       builder: (context, candidates, rejected) => InkWell(
-                          onTap: () {
-                            store.selectCharacter(character.id);
-                            store.setPage(3);
-                          },
+                          onDoubleTap: () => showCharacterDialog(context, store,
+                              character: character),
                           borderRadius: BorderRadius.circular(10),
                           child: Container(
                               padding: const EdgeInsets.all(18),
@@ -2881,29 +2881,10 @@ class CharacterManagementPage extends StatelessWidget {
                                                   fontSize: 18,
                                                   fontWeight:
                                                       FontWeight.w700))),
-                                      PopupMenuButton<String>(
-                                          padding: EdgeInsets.zero,
-                                          onSelected: (value) {
-                                            if (value == 'edit') {
-                                              showCharacterDialog(
-                                                  context, store,
-                                                  character: character);
-                                            } else if (value == 'delete') {
-                                              showDeleteCharacterDialog(
-                                                  context, store, character);
-                                            }
-                                          },
-                                          itemBuilder: (context) => [
-                                                const PopupMenuItem(
-                                                    value: 'edit',
-                                                    child: Text('编辑角色')),
-                                                PopupMenuItem(
-                                                    value: 'delete',
-                                                    enabled: store
-                                                            .characters.length >
-                                                        1,
-                                                    child: const Text('删除角色'))
-                                              ])
+                                      const Tooltip(
+                                          message: '双击编辑角色',
+                                          child: Icon(Icons.edit_outlined,
+                                              color: muted, size: 20))
                                     ]),
                                     const SizedBox(height: 14),
                                     Text(
@@ -2928,7 +2909,7 @@ class CharacterManagementPage extends StatelessWidget {
                                           style: const TextStyle(
                                               color: muted, fontSize: 12)),
                                       const Spacer(),
-                                      const Text('查看所有技能',
+                                      const Text('双击编辑角色',
                                           style: TextStyle(
                                               color: teal,
                                               fontSize: 13,
@@ -5485,7 +5466,30 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                         const Align(
                             alignment: Alignment.centerLeft,
                             child: Text('精神值和耐力值会根据技能重数自动计算，无需手动录入。',
-                                style: TextStyle(color: muted, fontSize: 12)))
+                                style: TextStyle(color: muted, fontSize: 12))),
+                        if (character != null) ...[
+                          const SizedBox(height: 18),
+                          SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton.icon(
+                                  style: OutlinedButton.styleFrom(
+                                      foregroundColor: Colors.redAccent,
+                                      side: const BorderSide(
+                                          color: Colors.redAccent)),
+                                  onPressed: store.characters.length <= 1
+                                      ? null
+                                      : () async {
+                                          final removed =
+                                              await showDeleteCharacterDialog(
+                                                  context, store, character);
+                                          if (removed && context.mounted) {
+                                            Navigator.pop(context);
+                                          }
+                                        },
+                                  icon: const Icon(Icons.delete_outline,
+                                      size: 17),
+                                  label: const Text('删除角色')))
+                        ]
                       ])),
                   actions: [
                     TextButton(
@@ -5962,24 +5966,25 @@ class _DraftPreviewSkillRow extends StatelessWidget {
       ]));
 }
 
-Future<void> showDeleteCharacterDialog(
+Future<bool> showDeleteCharacterDialog(
     BuildContext context, SkillStore store, CharacterData character) async {
-  await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-              title: const Text('删除角色'),
-              content: Text('确定删除「${character.name}」吗？该角色的技能重数也会一并删除。'),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('取消')),
-                FilledButton(
-                    style: FilledButton.styleFrom(
-                        backgroundColor: Colors.redAccent),
-                    onPressed: () {
-                      store.removeCharacter(character);
-                      Navigator.pop(context);
-                    },
-                    child: const Text('删除'))
-              ]));
+  return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+                  title: const Text('删除角色'),
+                  content: Text('确定删除「${character.name}」吗？该角色的技能重数也会一并删除。'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('取消')),
+                    FilledButton(
+                        style: FilledButton.styleFrom(
+                            backgroundColor: Colors.redAccent),
+                        onPressed: () {
+                          store.removeCharacter(character);
+                          Navigator.pop(context, true);
+                        },
+                        child: const Text('删除'))
+                  ])) ??
+      false;
 }
