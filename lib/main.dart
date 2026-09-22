@@ -6,6 +6,7 @@ import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image/image.dart' as img;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'boss_catalog_service.dart';
@@ -5203,10 +5204,47 @@ Future<Map<String, int>?> pickCharacterImageLevels(
   if (!Platform.isMacOS && !Platform.isWindows) {
     throw const FormatException('当前图片识别支持 macOS 和 Windows');
   }
+  String ocrPath = path;
+  Directory? temporaryDirectory;
+  try {
+    final source = img.decodeImage(await File(path).readAsBytes());
+    if (source != null) {
+      final minimumWidthScale = source.width < 900 ? 900 / source.width : 1.0;
+      final maximumSizeScale = 3000 / math.max(source.width, source.height);
+      final scale = math.min(minimumWidthScale, maximumSizeScale);
+      var prepared = scale > 1.05
+          ? img.copyResize(source,
+              width: (source.width * scale).round(),
+              height: (source.height * scale).round(),
+              interpolation: img.Interpolation.cubic)
+          : source;
+      prepared = img.adjustColor(prepared, contrast: 1.35, saturation: 0.35);
+      temporaryDirectory =
+          await Directory.systemTemp.createTemp('baizhan_skill_ocr_');
+      ocrPath = '${temporaryDirectory.path}/prepared.png';
+      await File(ocrPath).writeAsBytes(img.encodePng(prepared));
+    }
+  } catch (_) {
+    // OCR can still try the original when preprocessing cannot decode an image.
+  }
   const channel = MethodChannel('baizhan_skill/ocr');
-  final raw = await channel
-          .invokeListMethod<dynamic>('recognizeText', {'path': path}) ??
-      const [];
+  final List<dynamic> raw;
+  try {
+    raw = await channel
+            .invokeListMethod<dynamic>('recognizeText', {'path': ocrPath}) ??
+        const [];
+  } finally {
+    if (temporaryDirectory != null) {
+      try {
+        await temporaryDirectory.delete(recursive: true);
+      } catch (_) {}
+    }
+  }
+  return parseCharacterImageOcr(raw, store, gender);
+}
+
+Map<String, int> parseCharacterImageOcr(
+    List<dynamic> raw, SkillStore store, String gender) {
   final rankHeaders = {
     '十重': 10,
     '九重': 9,
@@ -5221,9 +5259,40 @@ Future<Map<String, int>?> pickCharacterImageLevels(
   };
   final knownSkills = store.bosses.expand((boss) => boss.skills).toList();
   final levels = <String, int>{};
-  var currentRank = 0;
+  // The game's skill overview is ordered from ten ranks downward. The top
+  // heading is often clipped by the currency bar, so treat the first block as
+  // ten ranks even when OCR misses that heading.
+  var currentRank = 10;
   String normalize(String value) =>
       value.replaceAll(RegExp(r'[^\u3400-\u9fffA-Za-z0-9]'), '');
+  int editDistance(String left, String right) {
+    var previous = List<int>.generate(right.length + 1, (index) => index);
+    for (var i = 0; i < left.length; i++) {
+      final current = <int>[i + 1];
+      for (var j = 0; j < right.length; j++) {
+        current.add(math.min(math.min(current[j] + 1, previous[j + 1] + 1),
+            previous[j] + (left.codeUnitAt(i) == right.codeUnitAt(j) ? 0 : 1)));
+      }
+      previous = current;
+    }
+    return previous.last;
+  }
+
+  bool approximatelyContains(String text, String name) {
+    if (text.contains(name)) return true;
+    if (name.length < 3 || text.length < name.length) return false;
+    final allowedErrors = name.length >= 6 ? 2 : 1;
+    for (var start = 0; start <= text.length - name.length; start++) {
+      if (editDistance(text.substring(start, start + name.length), name) <=
+          allowedErrors) {
+        return true;
+      }
+    }
+    return text.length >= 3 &&
+        text.length < name.length &&
+        editDistance(text, name) <= 1;
+  }
+
   for (final item in raw) {
     if (item is! Map) continue;
     final text = item['text']?.toString() ?? '';
@@ -5235,13 +5304,10 @@ Future<Map<String, int>?> pickCharacterImageLevels(
       currentRank = header.value;
       continue;
     }
-    if (currentRank == 0) continue;
     for (final skill in knownSkills) {
       final skillName = skillNameForGender(skill, gender);
       final normalizedName = normalize(skillName);
-      if (normalizedText.contains(normalizedName) ||
-          normalizedName.contains(normalizedText) &&
-              normalizedText.length >= 3) {
+      if (approximatelyContains(normalizedText, normalizedName)) {
         levels[skill.name] = currentRank;
       }
     }
