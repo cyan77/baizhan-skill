@@ -479,7 +479,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('编辑预览首领'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('3 重'));
+    await tester.tap(find.text('3 重').last);
     await tester.pumpAndSettle();
     await tester.tap(find.text('8 重').last);
     await tester.pumpAndSettle();
@@ -546,7 +546,8 @@ void main() {
     await tester.tap(find.text('打开批量编辑'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('1 重'));
+    expect(find.text('2 重'), findsOneWidget);
+    await tester.tap(find.text('2 重').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('8 重').last);
     await tester.pumpAndSettle();
@@ -703,6 +704,45 @@ void main() {
         ['second', 'archived', 'first']);
   });
 
+  testWidgets('character cards can be long-pressed and dragged to reorder',
+      (tester) async {
+    final store = SkillStore();
+    store.characters.addAll([
+      CharacterData(
+          id: 'drag-first',
+          name: '拖动一',
+          gender: '女性',
+          school: '未设置',
+          mind: '未设置',
+          position: '输出',
+          levels: const {}),
+      CharacterData(
+          id: 'drag-second',
+          name: '拖动二',
+          gender: '男性',
+          school: '未设置',
+          mind: '未设置',
+          position: '输出',
+          levels: const {})
+    ]);
+
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: CharacterManagementPage(store: store))));
+    await tester.pumpAndSettle();
+
+    final gesture =
+        await tester.startGesture(tester.getCenter(find.text('拖动一')));
+    await tester.pump(const Duration(milliseconds: 600));
+    await gesture.moveTo(tester.getCenter(find.text('拖动二')));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(
+        store.characters.map((item) => item.id), ['drag-second', 'drag-first']);
+    expect(tester.takeException(), isNull);
+  });
+
   test('disabling a character removes it from selection and active lists', () {
     final store = SkillStore();
     final first = CharacterData(
@@ -754,13 +794,16 @@ void main() {
                     CharacterManagementPage(store: store)))));
     await tester.pumpAndSettle();
 
-    expect(find.byIcon(Icons.check_rounded), findsOneWidget);
-    await tester.tap(find.byIcon(Icons.check_rounded));
+    expect(find.text('精神 10,000'), findsOneWidget);
+    expect(find.text('耐力 10,000'), findsOneWidget);
+    expect(find.text('0% 技能重数进度'), findsOneWidget);
+    expect(find.byIcon(Icons.toggle_on_rounded), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.toggle_on_rounded));
     await tester.pumpAndSettle();
 
     expect(character.archived, isTrue);
     expect(store.activeCharacters, isEmpty);
-    expect(find.byIcon(Icons.close_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.toggle_off_rounded), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -806,6 +849,25 @@ void main() {
     expect(store.characters.single.levels['skill-a'], 8);
     expect(store.characters.single.levels['skill-b'], 1);
     expect(store.purpleSkills, contains('新增技能'));
+  });
+
+  test('skipping a Boss catalog version suppresses automatic prompts',
+      () async {
+    final catalog = const RemoteBossCatalog(
+        version: 2, updatedAt: '2026-09-21', notes: '测试更新', bosses: []);
+    final service = _FakeBossCatalogService(catalog);
+    final store = SkillStore(bossCatalogService: service)
+      ..bossCatalogVersion = 1
+      ..availableBossCatalog = catalog;
+
+    await store.skipBossCatalogUpdate();
+
+    expect(store.availableBossCatalog, isNull);
+    expect(store.skippedBossCatalogVersion, 2);
+    expect(await store.checkForBossCatalogUpdate(), isFalse);
+    expect(store.availableBossCatalog, isNull);
+    expect(await store.checkForBossCatalogUpdate(manual: true), isTrue);
+    expect(store.availableBossCatalog?.version, 2);
   });
 
   test('newer cloud backup is detected before upload and prevents overwrite',
@@ -922,6 +984,15 @@ void main() {
     expect(service.testedConfig, same(draft));
     expect(store.syncConfig, isNull);
   });
+}
+
+class _FakeBossCatalogService extends BossCatalogService {
+  _FakeBossCatalogService(this.catalog);
+
+  final RemoteBossCatalog catalog;
+
+  @override
+  Future<RemoteBossCatalog> fetch() async => catalog;
 }
 
 class _FakeWebDavSyncService extends WebDavSyncService {

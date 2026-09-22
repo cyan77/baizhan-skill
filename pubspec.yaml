@@ -1,7 +1,7 @@
 name: baizhan_skill
 description: JX3 百战异闻录技能统计工具。
 publish_to: "none"
-version: 0.1.8+9
+version: 0.1.9+10
 
 environment:
   sdk: ">=3.3.0 <4.0.0"

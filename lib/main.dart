@@ -426,6 +426,7 @@ class SkillStore extends ChangeNotifier {
   int? pendingSkillPageMaxRank;
   static const storageKey = 'battle_skill_data_v3';
   static const bossCatalogVersionKey = 'boss_catalog_version';
+  static const bossCatalogSkippedVersionKey = 'boss_catalog_skipped_version';
   SharedPreferences? _prefs;
   final ThemeSettingsStore themeSettingsStore = ThemeSettingsStore();
   final SyncSettingsStore syncSettingsStore;
@@ -444,6 +445,7 @@ class SkillStore extends ChangeNotifier {
   RemoteBackup? newerRemoteBackup;
   RemoteBossCatalog? availableBossCatalog;
   int bossCatalogVersion = 1;
+  int? skippedBossCatalogVersion;
   bool bossCatalogCheckBusy = false;
   String? bossCatalogCheckError;
   Timer? _autoSyncTimer;
@@ -470,6 +472,7 @@ class SkillStore extends ChangeNotifier {
     lastSyncAt = await syncSettingsStore.loadLastSyncAt();
     currentRemoteBackupPath = await syncSettingsStore.loadCurrentBackupPath();
     bossCatalogVersion = _prefs!.getInt(bossCatalogVersionKey) ?? 1;
+    skippedBossCatalogVersion = _prefs!.getInt(bossCatalogSkippedVersionKey);
     final raw = _prefs!.getString(storageKey);
     if (raw == null)
       _seed();
@@ -488,14 +491,15 @@ class SkillStore extends ChangeNotifier {
     if (checked && newerRemoteBackup == null) _scheduleChangeSync();
   }
 
-  Future<bool> checkForBossCatalogUpdate() async {
+  Future<bool> checkForBossCatalogUpdate({bool manual = false}) async {
     if (bossCatalogCheckBusy) return false;
     bossCatalogCheckBusy = true;
     bossCatalogCheckError = null;
     notifyListeners();
     try {
       final catalog = await bossCatalogService.fetch();
-      if (catalog.version > bossCatalogVersion) {
+      if (catalog.version > bossCatalogVersion &&
+          (manual || catalog.version != skippedBossCatalogVersion)) {
         availableBossCatalog = catalog;
         notifyListeners();
         return true;
@@ -512,6 +516,16 @@ class SkillStore extends ChangeNotifier {
 
   void dismissBossCatalogUpdate() {
     availableBossCatalog = null;
+    notifyListeners();
+  }
+
+  Future<void> skipBossCatalogUpdate() async {
+    final catalog = availableBossCatalog;
+    if (catalog == null) return;
+    skippedBossCatalogVersion = catalog.version;
+    availableBossCatalog = null;
+    await _prefs?.setInt(
+        bossCatalogSkippedVersionKey, skippedBossCatalogVersion!);
     notifyListeners();
   }
 
@@ -558,8 +572,10 @@ class SkillStore extends ChangeNotifier {
           .where((skill) => skill.tradable)
           .map((skill) => skill.name));
     bossCatalogVersion = catalog.version;
+    skippedBossCatalogVersion = null;
     availableBossCatalog = null;
     await _prefs?.setInt(bossCatalogVersionKey, bossCatalogVersion);
+    await _prefs?.remove(bossCatalogSkippedVersionKey);
     _save();
     notifyListeners();
   }
@@ -1765,6 +1781,10 @@ class _BossCatalogUpdateBanner extends StatelessWidget {
                   child: Text('发现首领技能数据更新（版本 ${catalog.version}）',
                       style: const TextStyle(
                           color: ink, fontWeight: FontWeight.w600))),
+              TextButton(
+                  onPressed: store.skipBossCatalogUpdate,
+                  child: const Text('跳过此版本')),
+              const SizedBox(width: 4),
               TextButton(
                   onPressed: store.dismissBossCatalogUpdate,
                   child: const Text('稍后')),
@@ -3295,55 +3315,68 @@ class CharacterManagementPage extends StatelessWidget {
                       ? 0.0
                       : levels.fold<int>(0, (sum, value) => sum + value) /
                           (levels.length * store.maxSkillRank);
+                  final spirit = store.stat(character.id, true);
+                  final stamina = store.stat(character.id, false);
                   return DragTarget<String>(
                       onWillAcceptWithDetails: (details) =>
                           details.data != character.id,
                       onAcceptWithDetails: (details) =>
                           store.reorderCharacter(details.data, character.id),
-                      builder: (context, candidates, rejected) => InkWell(
-                          onDoubleTap: () => showCharacterDialog(context, store,
-                              character: character),
-                          borderRadius: BorderRadius.circular(10),
-                          child: Container(
-                              padding: const EdgeInsets.all(18),
-                              decoration: BoxDecoration(
-                                  color: character.archived
-                                      ? const Color(0xfff4f7f5)
-                                      : Colors.white,
-                                  border: Border.all(
+                      builder: (context, candidates, rejected) => LongPressDraggable<
+                              String>(
+                          data: character.id,
+                          feedback: Material(
+                              color: Colors.transparent,
+                              child: Container(
+                                  width: 260,
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      border: Border.all(color: teal),
+                                      borderRadius: BorderRadius.circular(10),
+                                      boxShadow: const [
+                                        BoxShadow(
+                                            color: Color(0x22000000),
+                                            blurRadius: 12,
+                                            offset: Offset(0, 5))
+                                      ]),
+                                  child: Row(children: [
+                                    const Icon(Icons.drag_indicator,
+                                        color: teal),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                        child: Text(character.name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                                color: ink,
+                                                fontWeight: FontWeight.w700)))
+                                  ]))),
+                          child: InkWell(
+                              onDoubleTap: () => showCharacterDialog(
+                                  context, store, character: character),
+                              borderRadius: BorderRadius.circular(10),
+                              child: Container(
+                                  padding: const EdgeInsets.all(18),
+                                  decoration: BoxDecoration(
                                       color: character.archived
-                                          ? const Color(0xffd5dfda)
-                                          : line),
-                                  borderRadius: BorderRadius.circular(10)),
-                              child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
+                                          ? const Color(0xfff4f7f5)
+                                          : Colors.white,
+                                      border: Border.all(
+                                          color: character.archived
+                                              ? const Color(0xffd5dfda)
+                                              : line),
+                                      borderRadius: BorderRadius.circular(10)),
+                                  child:
+                                      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                                     Row(children: [
-                                      LongPressDraggable<String>(
-                                          data: character.id,
-                                          feedback: Material(
-                                              color: Colors.transparent,
-                                              child: Container(
-                                                  padding:
-                                                      const EdgeInsets.all(10),
-                                                  decoration: BoxDecoration(
-                                                      color: Colors.white,
-                                                      border: Border.all(
-                                                          color: teal),
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                              10)),
-                                                  child: const Icon(
-                                                      Icons.drag_indicator,
-                                                      color: teal))),
-                                          child: const Tooltip(
-                                              message: '拖动调整角色顺序',
-                                              child: Padding(
-                                                  padding:
-                                                      EdgeInsets.only(right: 8),
-                                                  child: Icon(
-                                                      Icons.drag_indicator,
-                                                      color: muted)))),
+                                      const Tooltip(
+                                          message: '长按角色卡片拖动调整顺序',
+                                          child: Padding(
+                                              padding:
+                                                  EdgeInsets.only(right: 8),
+                                              child: Icon(Icons.drag_indicator,
+                                                  color: muted))),
                                       MindAvatar(
                                           character: character, radius: 23),
                                       const SizedBox(width: 12),
@@ -3381,7 +3414,7 @@ class CharacterManagementPage extends StatelessWidget {
                                                           BorderRadius.circular(
                                                               8),
                                                       border: Border.all(color: character.archived ? const Color(0xffd5aaa2) : const Color(0xffacd7c4))),
-                                                  child: Icon(character.archived ? Icons.close_rounded : Icons.check_rounded, size: 17, color: character.archived ? const Color(0xffa96d65) : teal)))),
+                                                  child: Icon(character.archived ? Icons.toggle_off_rounded : Icons.toggle_on_rounded, size: 19, color: character.archived ? const Color(0xffa96d65) : teal)))),
                                       Tooltip(
                                           message: '编辑角色',
                                           child: Listener(
@@ -3399,12 +3432,12 @@ class CharacterManagementPage extends StatelessWidget {
                                     ]),
                                     const SizedBox(height: 14),
                                     Text(
-                                        '${character.school} · ${character.mind} · ${character.position}',
+                                        '${character.school} · ${character.mind} · ${character.position} · 换将点 ${character.swapPoints}',
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(
                                             color: muted, fontSize: 13)),
-                                    const SizedBox(height: 12),
+                                    const SizedBox(height: 8),
                                     ClipRRect(
                                         borderRadius: BorderRadius.circular(5),
                                         child: LinearProgressIndicator(
@@ -3415,6 +3448,20 @@ class CharacterManagementPage extends StatelessWidget {
                                             color: character.archived
                                                 ? muted
                                                 : teal)),
+                                    const SizedBox(height: 8),
+                                    Row(children: [
+                                      Text('精神 ${formatNumber(spirit)}',
+                                          style: const TextStyle(
+                                              color: ink,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600)),
+                                      const Spacer(),
+                                      Text('耐力 ${formatNumber(stamina)}',
+                                          style: const TextStyle(
+                                              color: ink,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600))
+                                    ]),
                                     const Spacer(),
                                     Row(children: [
                                       Text(
@@ -3431,7 +3478,7 @@ class CharacterManagementPage extends StatelessWidget {
                                               fontSize: 13,
                                               fontWeight: FontWeight.w700))
                                     ])
-                                  ]))));
+                                  ])))));
                 })
         ]));
   }
@@ -3754,7 +3801,7 @@ class OverviewPage extends StatelessWidget {
       ]));
 }
 
-class SkillMatrix extends StatelessWidget {
+class SkillMatrix extends StatefulWidget {
   const SkillMatrix(
       {required this.store,
       required this.skillNames,
@@ -3769,9 +3816,23 @@ class SkillMatrix extends StatelessWidget {
   final ValueChanged<String>? onDeleteSkill;
 
   @override
+  State<SkillMatrix> createState() => _SkillMatrixState();
+}
+
+class _SkillMatrixState extends State<SkillMatrix> {
+  final horizontalController = ScrollController();
+
+  @override
+  void dispose() {
+    horizontalController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final characters = this.characters ?? store.activeCharacters;
-    if (skillNames.isEmpty) {
+    final store = widget.store;
+    final characters = widget.characters ?? store.activeCharacters;
+    if (widget.skillNames.isEmpty) {
       return CardShell(
           child: const Text('暂无技能记录', style: TextStyle(color: muted)));
     }
@@ -3806,16 +3867,18 @@ class SkillMatrix extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            color: header ? muted : accent,
+                            color: header ? muted : widget.accent,
                             fontSize: header ? 12 : 13,
                             fontWeight:
                                 header ? FontWeight.w700 : FontWeight.w600))),
-                if (!header && skillName != null && onDeleteSkill != null)
+                if (!header &&
+                    skillName != null &&
+                    widget.onDeleteSkill != null)
                   IconButton(
                       tooltip: '移除重要技能',
                       visualDensity: VisualDensity.compact,
                       iconSize: 17,
-                      onPressed: () => onDeleteSkill!(skillName),
+                      onPressed: () => widget.onDeleteSkill!(skillName),
                       icon: const Icon(Icons.close, color: muted))
               ]));
 
@@ -3836,30 +3899,34 @@ class SkillMatrix extends StatelessWidget {
           child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Column(children: [
               skillCell('技能名称', header: true),
-              ...skillNames.map(
+              ...widget.skillNames.map(
                   (name) => skillCell(displaySkillLabel(name), skillName: name))
             ]),
             Expanded(
-                child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: SizedBox(
-                        width: characterTableWidth,
-                        child: Column(children: [
-                          Row(
-                              children:
-                                  characters.map(characterHeader).toList()),
-                          ...skillNames.map((skillName) => Row(
-                              children: characters
-                                  .map((character) => _SkillMatrixCell(
-                                      width: characterColumnWidth,
-                                      height: rowHeight,
-                                      alignment: Alignment.center,
-                                      child: RankBadge(
-                                          rank: store.skillLevelForName(
-                                              character.id, skillName),
-                                          plain: true)))
-                                  .toList()))
-                        ]))))
+                child: Scrollbar(
+                    controller: horizontalController,
+                    thumbVisibility: true,
+                    child: SingleChildScrollView(
+                        controller: horizontalController,
+                        scrollDirection: Axis.horizontal,
+                        child: SizedBox(
+                            width: characterTableWidth,
+                            child: Column(children: [
+                              Row(
+                                  children:
+                                      characters.map(characterHeader).toList()),
+                              ...widget.skillNames.map((skillName) => Row(
+                                  children: characters
+                                      .map((character) => _SkillMatrixCell(
+                                          width: characterColumnWidth,
+                                          height: rowHeight,
+                                          alignment: Alignment.center,
+                                          child: RankBadge(
+                                              rank: store.skillLevelForName(
+                                                  character.id, skillName),
+                                              plain: true)))
+                                      .toList()))
+                            ])))))
           ]));
     });
   }
@@ -4676,7 +4743,7 @@ class BossPage extends StatelessWidget {
   }
 
   Future<void> _checkCatalog(BuildContext context) async {
-    final found = await store.checkForBossCatalogUpdate();
+    final found = await store.checkForBossCatalogUpdate(manual: true);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(store.bossCatalogCheckError ??
@@ -6128,6 +6195,14 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
   String? importing;
   final importedLevels = <String, int>{};
   if (character != null) {
+    final recordedLevels =
+        character.levels.values.where((level) => level > 0).toList();
+    if (recordedLevels.isNotEmpty) {
+      initialSkillLevel = recordedLevels
+          .reduce((lowest, level) => level < lowest ? level : lowest);
+      initialSkillLevel =
+          initialSkillLevel.clamp(1, store.maxSkillRank).toInt();
+    }
     for (final boss in store.bosses) {
       for (final skill in boss.skills) {
         importedLevels[skill.name] = store.level(character.id, skill.id);
@@ -6289,7 +6364,9 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                                                     data.gender,
                                                     data.skillLevels);
                                             setState(() {
-                                              name.text = data.name;
+                                              if (name.text.trim().isEmpty) {
+                                                name.text = data.name;
+                                              }
                                               gender = data.gender;
                                               if (character == null) {
                                                 importedLevels.clear();
