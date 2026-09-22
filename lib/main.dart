@@ -61,7 +61,7 @@ const schoolMindPositions = <String, Map<String, String>>{
   '苍云': {'分山劲': '输出', '铁骨衣': '防御'},
   '纯阳': {'紫霞功': '输出', '太虚剑意': '输出'},
   '唐门': {'天罗诡道': '输出', '惊羽诀': '输出'},
-  '藏剑': {'问水诀/山居剑意': '输出'},
+  '藏剑': {'问水诀': '输出', '山居剑意': '输出'},
   '丐帮': {'笑尘诀': '输出'},
   '霸刀': {'北傲诀': '输出'},
   '蓬莱': {'凌海诀': '输出'},
@@ -74,6 +74,42 @@ const schoolMindPositions = <String, Map<String, String>>{
 };
 
 const positionOptions = ['输出', '治疗', '防御'];
+
+const mindIconAssets = <String, String>{
+  '冰心诀': 'assets/minds/bingxin.jpg',
+  '云裳心经': 'assets/minds/yunshang.jpg',
+  '花间游': 'assets/minds/huajian.jpg',
+  '离经易道': 'assets/minds/lijing.jpg',
+  '毒经': 'assets/minds/dujing.jpg',
+  '补天诀': 'assets/minds/butian.jpg',
+  '莫问': 'assets/minds/mowen.jpg',
+  '相知': 'assets/minds/xiangzhi.jpg',
+  '无方': 'assets/minds/wufang.jpg',
+  '灵素': 'assets/minds/lingsu.png',
+  '傲血战意': 'assets/minds/aoxue.jpg',
+  '铁牢律': 'assets/minds/tielao.jpg',
+  '易筋经': 'assets/minds/yijin.jpg',
+  '洗髓经': 'assets/minds/xisui.jpg',
+  '焚影圣诀': 'assets/minds/fenying.jpg',
+  '明尊琉璃体': 'assets/minds/mingzun.jpg',
+  '分山劲': 'assets/minds/fenshan.jpg',
+  '铁骨衣': 'assets/minds/tiegu.jpg',
+  '紫霞功': 'assets/minds/zixia.jpg',
+  '太虚剑意': 'assets/minds/taixu.jpg',
+  '天罗诡道': 'assets/minds/tianluo.jpg',
+  '惊羽诀': 'assets/minds/jingyu.jpg',
+  '问水诀': 'assets/minds/wenshui.jpg',
+  '山居剑意': 'assets/minds/shanju.jpg',
+  '笑尘诀': 'assets/minds/xiaochen.jpg',
+  '北傲诀': 'assets/minds/beiao.jpg',
+  '凌海诀': 'assets/minds/linghai.jpg',
+  '隐龙诀': 'assets/minds/yinlong.jpg',
+  '太玄经': 'assets/minds/taixuan.jpg',
+  '孤峰诀': 'assets/minds/gufeng.jpg',
+  '山海心诀': 'assets/minds/shanhai.jpg',
+  '周天功': 'assets/minds/zhoutian.png',
+  '幽罗引': 'assets/minds/youluo.jpg',
+};
 
 String normalizePosition(String value) =>
     const {
@@ -93,8 +129,7 @@ String normalizeSchool(String value) =>
 
 String normalizeMind(String value) =>
     const {
-      '问水诀': '问水诀/山居剑意',
-      '山居剑意': '问水诀/山居剑意',
+      '问水诀/山居剑意': '问水诀',
       '孤锋诀': '孤峰诀',
     }[value] ??
     value;
@@ -2282,15 +2317,7 @@ class _CharacterResultTile extends StatelessWidget {
               borderRadius: BorderRadius.circular(11),
               border: Border.all(color: selected ? teal : line)),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            CircleAvatar(
-                radius: 17,
-                backgroundColor: selected ? teal.withOpacity(.14) : line,
-                child: Text(
-                    character.name.isEmpty
-                        ? '角'
-                        : character.name.substring(0, 1),
-                    style: const TextStyle(
-                        color: teal, fontWeight: FontWeight.w800))),
+            MindAvatar(character: character, radius: 17),
             const SizedBox(width: 9),
             Flexible(
                 child: Column(
@@ -2743,6 +2770,56 @@ class HomeBookNeeds extends StatelessWidget {
   }
 }
 
+class MindAvatar extends StatelessWidget {
+  const MindAvatar(
+      {required this.character,
+      this.radius = 19,
+      this.showCompletion = true,
+      super.key});
+  final CharacterData character;
+  final double radius;
+  final bool showCompletion;
+
+  @override
+  Widget build(BuildContext context) {
+    final asset = mindIconAssets[normalizeMind(character.mind)];
+    final size = radius * 2;
+    return SizedBox(
+        width: size,
+        height: size,
+        child: Stack(clipBehavior: Clip.none, children: [
+          ClipOval(
+              child: Container(
+                  width: size,
+                  height: size,
+                  color: const Color(0xffe5ece8),
+                  child: asset == null
+                      ? Center(
+                          child: Text(
+                              character.name.isEmpty
+                                  ? '角'
+                                  : character.name.substring(0, 1),
+                              style: const TextStyle(
+                                  color: teal, fontWeight: FontWeight.w800)))
+                      : Image.asset(asset,
+                          width: size, height: size, fit: BoxFit.cover))),
+          if (showCompletion && character.weeklyCompleted)
+            Positioned(
+                right: -2,
+                bottom: -2,
+                child: Container(
+                    width: radius * .9,
+                    height: radius * .9,
+                    decoration: BoxDecoration(
+                        color: teal,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 1.5)),
+                    child: Icon(Icons.check,
+                        color: Colors.white, size: radius * .62)))
+        ]));
+  }
+}
+
 class CharacterSwitcher extends StatelessWidget {
   const CharacterSwitcher(
       {required this.store, this.onSelected, this.characters, super.key});
@@ -2810,20 +2887,7 @@ class CharacterSwitcher extends StatelessWidget {
                               width: completed ? 1.5 : 1),
                           borderRadius: BorderRadius.circular(10)),
                       child: Row(children: [
-                        CircleAvatar(
-                            radius: 19,
-                            backgroundColor: active
-                                ? const Color(0xffcbe8dc)
-                                : const Color(0xffe5ece8),
-                            child: completed
-                                ? const Icon(Icons.check, color: teal, size: 21)
-                                : Text(
-                                    character.name.isEmpty
-                                        ? '角'
-                                        : character.name.substring(0, 1),
-                                    style: const TextStyle(
-                                        color: teal,
-                                        fontWeight: FontWeight.w800))),
+                        MindAvatar(character: character),
                         const SizedBox(width: 8),
                         Expanded(
                             child: Column(
@@ -2943,20 +3007,8 @@ class CharacterManagementPage extends StatelessWidget {
                                                   child: Icon(
                                                       Icons.drag_indicator,
                                                       color: muted)))),
-                                      CircleAvatar(
-                                          radius: 23,
-                                          backgroundColor:
-                                              const Color(0xffe8f3ee),
-                                          child: Text(
-                                              character.name.isEmpty
-                                                  ? '角'
-                                                  : character.name
-                                                      .substring(0, 1),
-                                              style: const TextStyle(
-                                                  color: teal,
-                                                  fontSize: 18,
-                                                  fontWeight:
-                                                      FontWeight.w700))),
+                                      MindAvatar(
+                                          character: character, radius: 23),
                                       const SizedBox(width: 12),
                                       Expanded(
                                           child: Text(character.name,
@@ -3069,18 +3121,7 @@ class CharacterPage extends StatelessWidget {
                             border: Border.all(color: active ? teal : line),
                             borderRadius: BorderRadius.circular(10)),
                         child: Row(children: [
-                          CircleAvatar(
-                              radius: 19,
-                              backgroundColor: active
-                                  ? const Color(0xffcbe8dc)
-                                  : const Color(0xffe5ece8),
-                              child: Text(
-                                  character.name.isEmpty
-                                      ? '角'
-                                      : character.name.substring(0, 1),
-                                  style: const TextStyle(
-                                      color: teal,
-                                      fontWeight: FontWeight.w800))),
+                          MindAvatar(character: character),
                           const SizedBox(width: 8),
                           Expanded(
                               child: Column(
@@ -3134,13 +3175,7 @@ class OverviewPage extends StatelessWidget {
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         CardShell(
             child: Row(children: [
-          CircleAvatar(
-              radius: 24,
-              backgroundColor: const Color(0xffe1f1ea),
-              child: Text(
-                  current.name.isEmpty ? '角' : current.name.substring(0, 1),
-                  style: const TextStyle(
-                      color: teal, fontSize: 20, fontWeight: FontWeight.w800))),
+          MindAvatar(character: current, radius: 24),
           const SizedBox(width: 12),
           Expanded(
               child: Column(
@@ -3216,13 +3251,7 @@ class OverviewPage extends StatelessWidget {
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          CircleAvatar(
-              radius: 24,
-              backgroundColor: const Color(0xffe1f1ea),
-              child: Text(
-                  character.name.isEmpty ? '角' : character.name.substring(0, 1),
-                  style: const TextStyle(
-                      color: teal, fontSize: 20, fontWeight: FontWeight.w800))),
+          MindAvatar(character: character, radius: 24),
           const SizedBox(width: 12),
           Expanded(
               child: Column(
