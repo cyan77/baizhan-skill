@@ -1,8 +1,8 @@
 {
   "type": "baizhan-bosses",
-  "version": 2,
-  "updatedAt": "2026-09-22T14:16:00.000000Z",
-  "notes": "Boss 技能基础数据",
+  "version": 3,
+  "updatedAt": "2026-09-23T00:00:00.000000Z",
+  "notes": "调整首领顺序：罗伊客倒数第二，无精耐提升技能最后",
   "bosses": [
     {
       "id": "boss-0",
@@ -973,6 +973,35 @@
       ]
     },
     {
+      "id": "boss-33",
+      "name": "罗伊客",
+      "type": "精英",
+      "spirit": 320.0,
+      "stamina": 480.0,
+      "skills": [
+        {
+          "id": "boss-33-skill-0",
+          "name": "狂澜摧城",
+          "tradable": false
+        },
+        {
+          "id": "boss-33-skill-1",
+          "name": "横绝八荒",
+          "tradable": false
+        },
+        {
+          "id": "boss-33-skill-2",
+          "name": "凝锋斩",
+          "tradable": false
+        },
+        {
+          "id": "boss-33-skill-3",
+          "name": "截影推山",
+          "tradable": true
+        }
+      ]
+    },
+    {
       "id": "boss-32",
       "name": "无精耐提升技能",
       "type": "普通",
@@ -1008,35 +1037,6 @@
           "id": "boss-32-skill-male-bear",
           "name": "蛮熊碎颅击",
           "tradable": false
-        }
-      ]
-    },
-    {
-      "id": "boss-33",
-      "name": "罗伊客",
-      "type": "精英",
-      "spirit": 320.0,
-      "stamina": 480.0,
-      "skills": [
-        {
-          "id": "boss-33-skill-0",
-          "name": "狂澜摧城",
-          "tradable": false
-        },
-        {
-          "id": "boss-33-skill-1",
-          "name": "横绝八荒",
-          "tradable": false
-        },
-        {
-          "id": "boss-33-skill-2",
-          "name": "凝锋斩",
-          "tradable": false
-        },
-        {
-          "id": "boss-33-skill-3",
-          "name": "截影推山",
-          "tradable": true
         }
       ]
     }

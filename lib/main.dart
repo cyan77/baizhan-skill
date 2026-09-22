@@ -562,11 +562,31 @@ class SkillStore extends ChangeNotifier {
   void _seed() {
     final data = seedData;
     final purpleNames = (data['purple'] as List).cast<String>().toSet();
-    final rawBosses = data['bosses'] as List;
+    final rawBosses = [...(data['bosses'] as List)];
+    if (!rawBosses.any((item) => (item as Map)['name'] == '罗伊客')) {
+      final noSpiritIndex =
+          rawBosses.indexWhere((item) => (item as Map)['name'] == '无精耐提升技能');
+      rawBosses.insert(
+          noSpiritIndex < 0 ? rawBosses.length : noSpiritIndex,
+          <String, dynamic>{
+            'name': '罗伊客',
+            'sp': 320,
+            'st': 480,
+            'skills': ['狂澜摧城', '横绝八荒', '凝锋斩', '截影推山']
+          });
+    }
+    final seedBossIdsByIndex = <int, String>{};
     for (var i = 0; i < rawBosses.length; i++) {
       final raw = Map<String, dynamic>.from(rawBosses[i] as Map);
+      // 保留无精耐提升技能原有的 ID；罗伊客使用新增的 boss-33，避免旧数据错位。
+      final bossId = raw['name'] == '无精耐提升技能'
+          ? 'boss-32'
+          : raw['name'] == '罗伊客'
+              ? 'boss-33'
+              : 'boss-$i';
+      seedBossIdsByIndex[i] = bossId;
       bosses.add(Boss(
-          id: 'boss-$i',
+          id: bossId,
           name: raw['name'] == '杜姬欣' ? '杜姬欣/钱宗龙' : raw['name'] as String,
           spirit: (raw['sp'] as num).toDouble(),
           stamina: (raw['st'] as num).toDouble(),
@@ -574,7 +594,7 @@ class SkillStore extends ChangeNotifier {
               .asMap()
               .entries
               .map((entry) => Skill(
-                  id: 'boss-$i-skill-${entry.key}',
+                  id: '$bossId-skill-${entry.key}',
                   name: entry.value as String,
                   tradable: purpleNames.contains(entry.value)))
               .toList()));
@@ -591,7 +611,7 @@ class SkillStore extends ChangeNotifier {
       overrides.forEach((key, value) {
         final pieces = key.split(':');
         if (pieces.length == 2)
-          levels['boss-${pieces[0]}-skill-${pieces[1]}'] =
+          levels['${int.tryParse(pieces[0]) == 32 ? 'boss-32' : seedBossIdsByIndex[int.tryParse(pieces[0]) ?? -1] ?? 'boss-${pieces[0]}'}-skill-${pieces[1]}'] =
               (value as num).toInt();
       });
       final isFemale = i == 0;
@@ -1120,29 +1140,23 @@ class SkillStore extends ChangeNotifier {
   }
 
   Map<String, int> bookNeeds(String characterId) {
-    final values = _findCharacter(characterId)?.levels.values ?? const <int>[];
+    final character = _findCharacter(characterId);
+    if (character == null) return {};
+    final values = bosses
+        .expand((boss) => boss.skills)
+        .where((skill) => skillAppliesToGender(skill, character.gender))
+        .map((skill) => character.levels[skill.id] ?? 0);
     return {
-      '通本1': values.where((value) => value < 4).length,
-      '通本2': values.where((value) => value < 5).length,
-      '通本3': values.fold<int>(
+      // 与原始表格 I2 的公式一致：0/1/2 重分别需要 8/7/5 本。
+      '通本1': values.fold<int>(
           0,
           (sum, value) =>
               sum +
-              const [
-                8,
-                7,
-                5,
-                4,
-                3,
-                2,
-                1,
-                0,
-                0,
-                0,
-                0
-              ][value.clamp(0, 10).toInt()]),
-      '通本4': values.fold<int>(
-          0, (sum, value) => sum + (8 - value).clamp(0, 8).toInt())
+              (value < 3 ? const [8, 7, 5][value.clamp(0, 2).toInt()] : 0)),
+      // 与原始表格 I3、I71、J71 的公式一致。
+      '通本2': values.where((value) => value < 4).length,
+      '通本3': values.where((value) => value < 5).length,
+      '通本4': values.where((value) => value < 6).length
     };
   }
 
@@ -3323,10 +3337,20 @@ class CharacterManagementPage extends StatelessWidget {
                                                   fontSize: 18,
                                                   fontWeight:
                                                       FontWeight.w700))),
-                                      const Tooltip(
-                                          message: '双击编辑角色',
-                                          child: Icon(Icons.edit_outlined,
-                                              color: muted, size: 20))
+                                      Tooltip(
+                                          message: '编辑角色',
+                                          child: Listener(
+                                              behavior: HitTestBehavior.opaque,
+                                              onPointerUp: (_) =>
+                                                  showCharacterDialog(
+                                                      context, store,
+                                                      character: character),
+                                              child: const Padding(
+                                                  padding: EdgeInsets.all(6),
+                                                  child: Icon(
+                                                      Icons.edit_outlined,
+                                                      color: muted,
+                                                      size: 20))))
                                     ]),
                                     const SizedBox(height: 14),
                                     Text(
@@ -6131,43 +6155,59 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                                   ])),
                           SizedBox(
                               width: 215,
-                              child: InkWell(
-                                  borderRadius: BorderRadius.circular(12),
-                                  onTap: () => setState(
-                                      () => weeklyCompleted = !weeklyCompleted),
-                                  child: Container(
-                                      height: 42,
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 8),
-                                      decoration: BoxDecoration(
-                                          color: const Color(0xfff7f9f8),
-                                          borderRadius:
-                                              BorderRadius.circular(12),
-                                          border: Border.all(color: line)),
-                                      child: Row(children: [
-                                        Checkbox(
-                                            visualDensity:
-                                                VisualDensity.compact,
-                                            value: weeklyCompleted,
-                                            onChanged: (value) => setState(() =>
-                                                weeklyCompleted =
-                                                    value ?? false)),
-                                        const SizedBox(width: 2),
-                                        const Text('本周 CD',
-                                            style: TextStyle(
-                                                color: ink, fontSize: 13))
-                                      ])))),
-                          if (character == null)
-                            _LabeledFilterDropdown<int>(
-                                label: '全部技能重数',
-                                value: initialSkillLevel,
-                                values: List.generate(store.maxSkillRank,
-                                    (index) => store.maxSkillRank - index),
-                                width: 215,
-                                itemLabel: (value) => '$value 重',
-                                onChanged: (value) => setState(() =>
+                              child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const SizedBox(height: 18),
+                                    InkWell(
+                                        borderRadius: BorderRadius.circular(12),
+                                        onTap: () => setState(() =>
+                                            weeklyCompleted = !weeklyCompleted),
+                                        child: Container(
+                                            height: 42,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 8),
+                                            decoration: BoxDecoration(
+                                                color: const Color(0xfff7f9f8),
+                                                borderRadius:
+                                                    BorderRadius.circular(12),
+                                                border:
+                                                    Border.all(color: line)),
+                                            child: Row(children: [
+                                              Checkbox(
+                                                  visualDensity:
+                                                      VisualDensity.compact,
+                                                  value: weeklyCompleted,
+                                                  onChanged: (value) =>
+                                                      setState(() =>
+                                                          weeklyCompleted =
+                                                              value ?? false)),
+                                              const SizedBox(width: 2),
+                                              const Text('本周 CD',
+                                                  style: TextStyle(
+                                                      color: ink, fontSize: 13))
+                                            ])))
+                                  ])),
+                          _LabeledFilterDropdown<int>(
+                              label: '全部技能重数',
+                              value: initialSkillLevel,
+                              values: List.generate(store.maxSkillRank,
+                                  (index) => store.maxSkillRank - index),
+                              width: 215,
+                              itemLabel: (value) => '$value 重',
+                              onChanged: (value) => setState(() {
                                     initialSkillLevel =
-                                        value ?? initialSkillLevel))
+                                        value ?? initialSkillLevel;
+                                    if (character != null) {
+                                      for (final boss in store.bosses) {
+                                        for (final skill in boss.skills) {
+                                          importedLevels[skill.name] =
+                                              initialSkillLevel;
+                                        }
+                                      }
+                                    }
+                                  }))
                         ]),
                         const SizedBox(height: 14),
                         Row(children: [

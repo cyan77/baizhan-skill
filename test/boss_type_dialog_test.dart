@@ -152,6 +152,15 @@ void main() {
   testWidgets('home book needs fits inside a narrow fourth card',
       (tester) async {
     final store = SkillStore();
+    store.bosses.add(Boss(
+        id: 'narrow-boss',
+        name: '窄卡片首领',
+        spirit: 400,
+        stamina: 400,
+        skills: [
+          Skill(id: 'one', name: '窄技能一'),
+          Skill(id: 'two', name: '窄技能二')
+        ]));
     final character = CharacterData(
         id: 'narrow-home',
         name: '测试角色',
@@ -160,6 +169,7 @@ void main() {
         mind: '未设置',
         position: 'dps',
         levels: const {'one': 1, 'two': 10});
+    store.characters.add(character);
 
     await tester.pumpWidget(MaterialApp(
         home: Scaffold(
@@ -355,6 +365,51 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('character cards open the editor from double tap',
+      (tester) async {
+    final store = SkillStore();
+    store.characters.add(CharacterData(
+        id: 'card-character',
+        name: '卡片角色',
+        gender: '女性',
+        school: '未设置',
+        mind: '未设置',
+        position: '输出',
+        levels: const {}));
+
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: CharacterManagementPage(store: store))));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('卡片角色'));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.text('卡片角色'));
+    await tester.pumpAndSettle();
+    expect(find.text('编辑角色'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('character card edit icon opens the editor', (tester) async {
+    final store = SkillStore();
+    store.characters.add(CharacterData(
+        id: 'icon-character',
+        name: '图标角色',
+        gender: '女性',
+        school: '未设置',
+        mind: '未设置',
+        position: '输出',
+        levels: const {}));
+
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: CharacterManagementPage(store: store))));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.edit_outlined));
+    await tester.pumpAndSettle();
+    expect(find.text('编辑角色'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('add character dialog lays out shared dropdowns cleanly',
       (tester) async {
     final store = SkillStore();
@@ -457,6 +512,82 @@ void main() {
 
     store.setAllSkillLevels(8, characterId: character.id);
     expect(character.levels.values, everyElement(8));
+  });
+
+  testWidgets('editing character supports setting all skill ranks',
+      (tester) async {
+    final store = SkillStore();
+    store.bosses.add(Boss(
+        id: 'batch-edit-boss',
+        name: '批量编辑首领',
+        spirit: 400,
+        stamina: 400,
+        skills: [
+          Skill(id: 'batch-edit-a', name: '批量技能 A'),
+          Skill(id: 'batch-edit-b', name: '批量技能 B')
+        ]));
+    final character = CharacterData(
+        id: 'batch-edit-character',
+        name: '批量编辑角色',
+        gender: '女性',
+        school: '未设置',
+        mind: '未设置',
+        position: '输出',
+        levels: const {'batch-edit-a': 2, 'batch-edit-b': 5});
+    store.characters.add(character);
+
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: Builder(
+                builder: (context) => TextButton(
+                    onPressed: () => showCharacterDialog(context, store,
+                        character: character),
+                    child: const Text('打开批量编辑'))))));
+    await tester.tap(find.text('打开批量编辑'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('1 重'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('8 重').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(store.level(character.id, 'batch-edit-a'), 8);
+    expect(store.level(character.id, 'batch-edit-b'), 8);
+    expect(tester.takeException(), isNull);
+  });
+
+  test('book needs follow the source workbook formulas', () {
+    final store = SkillStore();
+    final skills = List.generate(
+        7, (index) => Skill(id: 'book-$index', name: '通本技能$index'));
+    store.bosses.add(Boss(
+        id: 'book-boss',
+        name: '通本首领',
+        spirit: 400,
+        stamina: 400,
+        skills: skills));
+    final character = CharacterData(
+        id: 'book-character',
+        name: '通本角色',
+        gender: '女性',
+        school: '未设置',
+        mind: '未设置',
+        position: '输出',
+        levels: const {
+          'book-0': 0,
+          'book-1': 1,
+          'book-2': 2,
+          'book-3': 3,
+          'book-4': 4,
+          'book-5': 5,
+          'book-6': 6
+        });
+    store.characters.add(character);
+
+    expect(store.bookNeeds(character.id),
+        {'通本1': 20, '通本2': 4, '通本3': 5, '通本4': 6});
   });
 
   test('imported skill ranks override the selected default rank', () {
