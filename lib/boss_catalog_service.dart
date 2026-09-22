@@ -16,7 +16,7 @@ class RemoteBossCatalog {
 
   factory RemoteBossCatalog.fromJson(Map<String, dynamic> json) {
     if (json['type'] != 'baizhan-bosses' || json['bosses'] is! List) {
-      throw const FormatException('Boss 技能数据格式不正确');
+      throw const FormatException('首领技能数据格式不正确');
     }
     return RemoteBossCatalog(
       version: (json['version'] as num?)?.toInt() ?? 0,
@@ -39,7 +39,7 @@ class BossCatalogService {
       final response =
           await request.close().timeout(const Duration(seconds: 10));
       if (response.statusCode != HttpStatus.ok) {
-        throw HttpException('获取 Boss 技能数据失败：${response.statusCode}');
+        throw HttpException('获取首领技能数据失败：${response.statusCode}');
       }
       final text = await utf8.decoder.bind(response).join();
       return RemoteBossCatalog.fromJson(

@@ -374,7 +374,7 @@ class SkillStore extends ChangeNotifier {
       }
       return false;
     } catch (_) {
-      bossCatalogCheckError = '无法连接 Boss 技能数据服务，请稍后重试';
+      bossCatalogCheckError = '无法连接首领技能数据服务，请稍后重试';
       return false;
     } finally {
       bossCatalogCheckBusy = false;
@@ -1144,12 +1144,12 @@ class SkillStore extends ChangeNotifier {
       'type': 'baizhan-bosses',
       'version': bossCatalogVersion + 1,
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
-      'notes': 'Boss 技能数据更新',
+      'notes': '首领技能数据更新',
       'bosses': bosses.map((boss) => boss.toJson()).toList()
     };
     final bytes = Uint8List.fromList(utf8.encode(jsonEncode(data)));
     final path = await FilePicker.saveFile(
-        dialogTitle: '导出全部 Boss 和技能',
+        dialogTitle: '导出全部首领和技能',
         fileName: 'baizhan-bosses.json',
         type: FileType.custom,
         allowedExtensions: ['json'],
@@ -1165,7 +1165,7 @@ class SkillStore extends ChangeNotifier {
     final data = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
     final rawBosses = data['bosses'];
     if (rawBosses is! List) {
-      throw const FormatException('文件中没有 Boss 数据');
+      throw const FormatException('文件中没有首领数据');
     }
 
     var bossesAdded = 0;
@@ -1502,7 +1502,7 @@ class _BossCatalogUpdateBanner extends StatelessWidget {
               const Icon(Icons.system_update_alt, color: teal, size: 19),
               const SizedBox(width: 9),
               Expanded(
-                  child: Text('发现 Boss 技能数据更新（版本 ${catalog.version}）',
+                  child: Text('发现首领技能数据更新（版本 ${catalog.version}）',
                       style: const TextStyle(
                           color: ink, fontWeight: FontWeight.w600))),
               TextButton(
@@ -1522,14 +1522,14 @@ Future<void> _showBossCatalogUpdateDialog(
   await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-              title: const Text('Boss 技能数据更新'),
+              title: const Text('首领技能数据更新'),
               content: SizedBox(
                   width: 420,
                   child: Column(mainAxisSize: MainAxisSize.min, children: [
                     Align(
                         alignment: Alignment.centerLeft,
                         child: Text('数据版本 ${catalog.version} · '
-                            '${catalog.bosses.length} 个 Boss')),
+                            '${catalog.bosses.length} 个首领')),
                     if (catalog.updatedAt.isNotEmpty) ...[
                       const SizedBox(height: 6),
                       Align(
@@ -1545,7 +1545,7 @@ Future<void> _showBossCatalogUpdateDialog(
                           child: Text(catalog.notes))
                     ],
                     const SizedBox(height: 14),
-                    const Text('更新会同步 Boss 基础信息和技能列表，并按技能保留角色现有重数。',
+                    const Text('更新会同步首领基础信息和技能列表，并按技能保留角色现有重数。',
                         style: TextStyle(color: muted, fontSize: 12))
                   ])),
               actions: [
@@ -1558,8 +1558,7 @@ Future<void> _showBossCatalogUpdateDialog(
                       if (dialogContext.mounted) Navigator.pop(dialogContext);
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                            content:
-                                Text('Boss 技能数据已更新到版本 ${catalog.version}')));
+                            content: Text('首领技能数据已更新到版本 ${catalog.version}')));
                       }
                     },
                     child: const Text('立即更新'))
@@ -1599,7 +1598,7 @@ class SideNav extends StatelessWidget {
             onTap: () => store.setPage(entry.key))),
         const Spacer(),
         Text(
-            '${store.activeCharacters.length} 个角色 · ${store.bosses.length} 个 Boss',
+            '${store.activeCharacters.length} 个角色 · ${store.bosses.length} 个首领',
             style: const TextStyle(color: muted, fontSize: 12)),
         const SizedBox(height: 6),
         const Text('数据自动保存在本机', style: TextStyle(color: muted, fontSize: 11))
@@ -2247,7 +2246,7 @@ class _HomePageState extends State<HomePage> {
     return PageBody(
         title: '首页',
         action: Text(
-            '${store.activeCharacters.length} 个角色 · ${store.bosses.length} 个 Boss',
+            '${store.activeCharacters.length} 个角色 · ${store.bosses.length} 个首领',
             style: const TextStyle(color: teal, fontWeight: FontWeight.w600)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _syncStatusBar(context),
@@ -2438,8 +2437,8 @@ class _ExistingSkillsPanelState extends State<ExistingSkillsPanel> {
                   controller: bossQuery,
                   names: store.bosses.map((boss) => boss.name).toList(),
                   width: width,
-                  hint: '全部 Boss',
-                  compactHint: 'Boss'),
+                  hint: '全部首领',
+                  compactHint: '首领'),
               _FilterDropdown<int>(
                   value: maxRank,
                   values: [0, ...List.generate(10, (index) => 10 - index)],
@@ -2451,7 +2450,7 @@ class _ExistingSkillsPanelState extends State<ExistingSkillsPanel> {
             ]);
           }),
           const SizedBox(height: 6),
-          const Text('点击技能可修改重数；名称、可交易状态和删除请前往 Boss 技能管理。',
+          const Text('点击技能可修改重数；名称、可交易状态和删除请前往首领技能管理。',
               style: TextStyle(color: muted, fontSize: 11)),
           const SizedBox(height: 4),
           if (bosses.isEmpty)
@@ -2468,7 +2467,7 @@ class _ExistingSkillsPanelState extends State<ExistingSkillsPanel> {
                 child: const Row(children: [
                   Expanded(
                       flex: 3,
-                      child: Text('Boss',
+                      child: Text('首领',
                           style: TextStyle(
                               color: muted,
                               fontSize: 11,
@@ -3018,7 +3017,7 @@ class OverviewPage extends StatelessWidget {
               ]))
         ])),
         const SizedBox(height: 18),
-        const Text('Boss 技能重数',
+        const Text('首领技能重数',
             style: TextStyle(
                 color: ink, fontSize: 16, fontWeight: FontWeight.w800)),
         const SizedBox(height: 10),
@@ -3069,7 +3068,7 @@ class OverviewPage extends StatelessWidget {
               Expanded(flex: 4, child: _bookCard(needs))
             ]),
       const SizedBox(height: 22),
-      PageBody(title: 'Boss 完成度', child: _bossTable(current))
+      PageBody(title: '首领完成度', child: _bossTable(current))
     ]));
   }
 
@@ -3154,7 +3153,7 @@ class OverviewPage extends StatelessWidget {
             child: const Row(children: [
               Expanded(
                   flex: 3,
-                  child: Text('Boss',
+                  child: Text('首领',
                       style: TextStyle(
                           color: muted,
                           fontSize: 12,
@@ -3423,8 +3422,8 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
               controller: bossQuery,
               names: widget.store.bosses.map((boss) => boss.name).toList(),
               width: width,
-              hint: '全部 Boss',
-              compactHint: 'Boss'),
+              hint: '全部首领',
+              compactHint: '首领'),
           _NameAutocomplete(
               controller: skillQuery,
               names: widget.skillNames,
@@ -3608,7 +3607,7 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
             orElse: () => characters.first);
     return PageBody(
         title: '所有技能汇总',
-        action: Text('${filteredBosses.length} 个 Boss',
+        action: Text('${filteredBosses.length} 个首领',
             style: const TextStyle(color: teal, fontWeight: FontWeight.w600)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           CharacterSwitcher(
@@ -3630,8 +3629,8 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
                   controller: bossQuery,
                   names: widget.store.bosses.map((boss) => boss.name).toList(),
                   width: width,
-                  hint: '全部 Boss',
-                  compactHint: 'Boss'),
+                  hint: '全部首领',
+                  compactHint: '首领'),
               _FilterDropdown<int>(
                   value: maxRank,
                   values: [0, ...List.generate(10, (index) => 10 - index)],
@@ -3644,13 +3643,13 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
           const SizedBox(height: 10),
           Text(
               character == null
-                  ? '切换角色后可按 Boss 和技能重数筛选。'
-                  : '当前角色：${character.name} · 符合条件的 Boss：${filteredBosses.length} 个',
+                  ? '切换角色后可按首领和技能重数筛选。'
+                  : '当前角色：${character.name} · 符合条件的首领：${filteredBosses.length} 个',
               style: const TextStyle(color: muted, fontSize: 12)),
           const SizedBox(height: 14),
           if (filteredBosses.isEmpty)
             const CardShell(
-                child: Text('没有符合条件的 Boss', style: TextStyle(color: muted)))
+                child: Text('没有符合条件的首领', style: TextStyle(color: muted)))
           else
             _AllSkillsTable(
                 store: widget.store,
@@ -3942,7 +3941,7 @@ class BossPage extends StatelessWidget {
   final SkillStore store;
   @override
   Widget build(BuildContext context) => PageBody(
-      title: 'Boss 技能管理',
+      title: '首领技能管理',
       action: TextButton.icon(
           onPressed: () => store.setPage(4),
           icon: const Icon(Icons.arrow_back, size: 16),
@@ -3953,9 +3952,9 @@ class BossPage extends StatelessWidget {
           const Icon(Icons.info_outline, color: teal),
           const SizedBox(width: 10),
           const Expanded(
-              child: Text('拖动 Boss 左侧把手可调整显示顺序；技能修改会同步到所有已有角色，增量导入只补充未添加内容。',
+              child: Text('拖动首领左侧把手可调整显示顺序；技能修改会同步到所有已有角色，增量导入只补充未添加内容。',
                   style: TextStyle(color: muted, fontSize: 12))),
-          Text('${store.bosses.length} 个 Boss',
+          Text('${store.bosses.length} 个首领',
               style: const TextStyle(color: teal, fontWeight: FontWeight.w800))
         ])),
         const SizedBox(height: 12),
@@ -3963,7 +3962,7 @@ class BossPage extends StatelessWidget {
           FilledButton.icon(
               onPressed: () => showBossDialog(context, store),
               icon: const Icon(Icons.add, size: 17),
-              label: const Text('录入新 Boss')),
+              label: const Text('录入新首领')),
           OutlinedButton.icon(
               onPressed: () => _exportBosses(context),
               icon: const Icon(Icons.file_upload_outlined, size: 17),
@@ -4026,13 +4025,13 @@ class BossPage extends StatelessWidget {
                           StatPill(label: '耐 +${formatNumber(boss.stamina)}'),
                           const SizedBox(width: 8),
                           IconButton(
-                              tooltip: '编辑 Boss',
+                              tooltip: '编辑首领',
                               onPressed: () =>
                                   showBossDialog(context, store, boss: boss),
                               icon:
                                   const Icon(Icons.edit_outlined, color: teal)),
                           IconButton(
-                              tooltip: '删除 Boss',
+                              tooltip: '删除首领',
                               onPressed: () =>
                                   showDeleteBossDialog(context, store, boss),
                               icon: const Icon(Icons.delete_outline,
@@ -4063,7 +4062,7 @@ class BossPage extends StatelessWidget {
     final exported = await store.exportBosses();
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(exported ? '已导出全部 Boss 和技能' : '已取消导出')));
+        SnackBar(content: Text(exported ? '已导出全部首领和技能' : '已取消导出')));
   }
 
   Future<void> _importBosses(BuildContext context) async {
@@ -4071,8 +4070,8 @@ class BossPage extends StatelessWidget {
       final result = await store.importBosses();
       if (!context.mounted || result == null) return;
       final message = result.bossesAdded == 0 && result.skillsAdded == 0
-          ? '没有需要新增的 Boss 或技能'
-          : '已新增 ${result.bossesAdded} 个 Boss、${result.skillsAdded} 个技能';
+          ? '没有需要新增的首领或技能'
+          : '已新增 ${result.bossesAdded} 个首领、${result.skillsAdded} 个技能';
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(message)));
     } catch (error) {
@@ -4088,8 +4087,8 @@ class BossPage extends StatelessWidget {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(store.bossCatalogCheckError ??
             (found
-                ? '发现新的 Boss 技能数据'
-                : '当前已是最新 Boss 技能数据（版本 ${store.bossCatalogVersion}）'))));
+                ? '发现新的首领技能数据'
+                : '当前已是最新首领技能数据（版本 ${store.bossCatalogVersion}）'))));
   }
 }
 
@@ -4178,14 +4177,13 @@ class SettingsPage extends StatelessWidget {
         const SizedBox(height: 16),
         _settingsSection(
             icon: Icons.edit_note_outlined,
-            title: 'Boss 管理',
+            title: '首领管理',
             child: ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.edit_note_outlined, color: teal),
-                title: const Text('Boss 列表',
+                title: const Text('首领列表',
                     style: TextStyle(color: ink, fontSize: 14)),
-                subtitle: Text(
-                    '${store.bosses.length} 个 Boss · 点击进入页面管理 Boss 和所属技能',
+                subtitle: Text('${store.bosses.length} 个首领 · 点击进入页面管理首领和所属技能',
                     style: const TextStyle(color: muted, fontSize: 12)),
                 trailing: const Icon(Icons.chevron_right, color: muted),
                 onTap: () => store.setPage(6)))
@@ -4530,7 +4528,7 @@ Future<void> confirmRemoteBackupRestore(
       builder: (dialogContext) => AlertDialog(
             title: const Text('恢复远程备份'),
             content: Text(
-                '本地角色、Boss、技能和重数将被“${backup.name}”替换。恢复不会自动上传；如需保留当前本地数据，请先手动同步或导出备份。'),
+                '本地角色、首领、技能和重数将被“${backup.name}”替换。恢复不会自动上传；如需保留当前本地数据，请先手动同步或导出备份。'),
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(dialogContext, false),
@@ -4760,7 +4758,7 @@ Future<void> showSkillDialog(
                                   setState(() => tradable = value ?? false)),
                         ] else ...[
                           const SizedBox(height: 12),
-                          const Text('名称、可交易状态和删除请前往 Boss 技能管理。',
+                          const Text('名称、可交易状态和删除请前往首领技能管理。',
                               style: TextStyle(color: muted, fontSize: 11))
                         ],
                       ]),
@@ -4811,7 +4809,7 @@ Future<void> showImportantDialog(BuildContext context, SkillStore store) async {
           builder: (context, setState) => AlertDialog(
                   title: const Text('添加重要技能'),
                   content: skillNames.isEmpty
-                      ? const Text('暂无已有技能，请先在 Boss 管理中录入技能。')
+                      ? const Text('暂无已有技能，请先在首领管理中录入技能。')
                       : Column(mainAxisSize: MainAxisSize.min, children: [
                           _NameAutocomplete(
                               controller: controller,
@@ -4979,21 +4977,21 @@ class _BossEditorDialogState extends State<_BossEditorDialog> {
   Widget build(BuildContext context) {
     final boss = widget.boss;
     return AlertDialog(
-        title: Text(boss == null ? '录入新 Boss' : '编辑 Boss'),
+        title: Text(boss == null ? '录入新首领' : '编辑首领'),
         content: SizedBox(
             width: 560,
             child: SingleChildScrollView(
                 child: Column(children: [
               TextField(
                   controller: name,
-                  decoration: const InputDecoration(labelText: 'Boss 名称')),
+                  decoration: const InputDecoration(labelText: '首领名称')),
               const SizedBox(height: 12),
               Align(
                   alignment: Alignment.centerLeft,
                   child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Boss 类型',
+                        const Text('首领类型',
                             style: TextStyle(color: muted, fontSize: 12)),
                         const SizedBox(height: 5),
                         _FilterDropdown<String>(
@@ -5088,15 +5086,14 @@ class _BossEditorDialogState extends State<_BossEditorDialog> {
                     padding: EdgeInsets.only(top: 16),
                     child: Align(
                         alignment: Alignment.centerLeft,
-                        child: Text('技能可在 Boss 卡片中点击后编辑、删除或新增。',
+                        child: Text('技能可在首领卡片中点击后编辑、删除或新增。',
                             style: TextStyle(color: muted, fontSize: 12))))
             ]))),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context), child: const Text('取消')),
           FilledButton(
-              onPressed: _save,
-              child: Text(boss == null ? '保存并同步角色' : '保存 Boss'))
+              onPressed: _save, child: Text(boss == null ? '保存并同步角色' : '保存首领'))
         ]);
   }
 }
@@ -5106,7 +5103,7 @@ Future<void> showDeleteBossDialog(
   await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-              title: const Text('删除 Boss'),
+              title: const Text('删除首领'),
               content: Text('确定删除「${boss.name}」及其全部技能吗？相关角色的重数也会一并删除。'),
               actions: [
                 TextButton(
@@ -5583,7 +5580,7 @@ Future<void> showCharacterDraftPreview(BuildContext context, SkillStore store,
                       const SizedBox(height: 12),
                       const Align(
                           alignment: Alignment.centerLeft,
-                          child: Text('Boss / 技能重数',
+                          child: Text('首领 / 技能重数',
                               style: TextStyle(
                                   color: ink, fontWeight: FontWeight.w700))),
                       const SizedBox(height: 6),

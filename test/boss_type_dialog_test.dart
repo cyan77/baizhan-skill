@@ -127,15 +127,15 @@ void main() {
                     builder: (context) => TextButton(
                         onPressed: () =>
                             showBossDialog(context, store, boss: boss),
-                        child: const Text('编辑 Boss')))))));
+                        child: const Text('编辑首领')))))));
 
-    await tester.tap(find.text('编辑 Boss'));
+    await tester.tap(find.text('编辑首领'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('普通'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('精英'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('保存 Boss'));
+    await tester.tap(find.text('保存首领'));
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
@@ -158,12 +158,12 @@ void main() {
             body: Builder(
                 builder: (context) => TextButton(
                     onPressed: () => showBossDialog(context, store, boss: boss),
-                    child: const Text('编辑 Boss'))))));
+                    child: const Text('编辑首领'))))));
 
-    await tester.tap(find.text('编辑 Boss'));
+    await tester.tap(find.text('编辑首领'));
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, '精神提升'), '300');
-    await tester.tap(find.text('保存 Boss'));
+    await tester.tap(find.text('保存首领'));
     await tester.pumpAndSettle();
 
     expect(find.text('精神提升与耐力提升相加必须等于 800'), findsOneWidget);
