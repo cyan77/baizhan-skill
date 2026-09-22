@@ -4,16 +4,20 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'boss_catalog_service.dart';
 import 'character_excel_import.dart';
 import 'seed_data.dart';
 import 'sync_service.dart';
 import 'theme_settings.dart';
+import 'update_service.dart';
 
 const navy = Color(0xffffffff);
 const ink = Color(0xff26332f);
@@ -23,6 +27,43 @@ const line = Color(0xffe4eae7);
 const teal = Color(0xff3c8c72);
 const purple = Color(0xff8d54c7);
 const gold = Color(0xffb56a18);
+
+class NavigationPageOption {
+  const NavigationPageOption(
+      {required this.id,
+      required this.label,
+      required this.icon,
+      required this.page});
+  final String id;
+  final String label;
+  final IconData icon;
+  final int page;
+}
+
+const navigationPageOptions = <NavigationPageOption>[
+  NavigationPageOption(
+      id: 'important', label: '重要技能', icon: Icons.star_border, page: 1),
+  NavigationPageOption(
+      id: 'tradable',
+      label: '可交易技能',
+      icon: Icons.auto_awesome_outlined,
+      page: 2),
+  NavigationPageOption(
+      id: 'all', label: '所有技能', icon: Icons.account_tree_outlined, page: 3),
+  NavigationPageOption(
+      id: 'characters', label: '角色管理', icon: Icons.groups_outlined, page: 5),
+  NavigationPageOption(
+      id: 'bosses', label: '首领管理', icon: Icons.edit_note_outlined, page: 6),
+];
+
+const defaultNavigationOrder = [
+  'important',
+  'tradable',
+  'all',
+  'characters',
+  'bosses'
+];
+const defaultNavigationVisible = ['important', 'tradable', 'all'];
 
 const schoolOptions = [
   '未设置',
@@ -85,7 +126,7 @@ const mindIconAssets = <String, String>{
   '莫问': 'assets/minds/mowen.jpg',
   '相知': 'assets/minds/xiangzhi.jpg',
   '无方': 'assets/minds/wufang.jpg',
-  '灵素': 'assets/minds/lingsu.png',
+  '灵素': 'assets/minds/lingsu.jpg',
   '傲血战意': 'assets/minds/aoxue.jpg',
   '铁牢律': 'assets/minds/tielao.jpg',
   '易筋经': 'assets/minds/yijin.jpg',
@@ -108,7 +149,7 @@ const mindIconAssets = <String, String>{
   '孤峰诀': 'assets/minds/gufeng.jpg',
   '山海心诀': 'assets/minds/shanhai.jpg',
   '周天功': 'assets/minds/zhoutian.png',
-  '幽罗引': 'assets/minds/youluo.jpg',
+  '幽罗引': 'assets/minds/youluo.png',
 };
 
 String normalizePosition(String value) =>
@@ -375,6 +416,9 @@ class SkillStore extends ChangeNotifier {
   int maxSkillRank = 10;
   String selectedCharacterId = '';
   int page = 0;
+  List<String> navigationOrder = [...defaultNavigationOrder];
+  Set<String> navigationVisible = {...defaultNavigationVisible};
+  Map<String, String> navigationLabels = {};
   String? pendingSkillPageCharacterId;
   int? pendingSkillPageMaxRank;
   static const storageKey = 'battle_skill_data_v3';
@@ -583,6 +627,27 @@ class SkillStore extends ChangeNotifier {
     selectedCharacterId =
         data['selectedCharacterId'] as String? ?? characters.first.id;
     page = (data['page'] as int? ?? 0).clamp(0, 7);
+    final validNavigationIds =
+        navigationPageOptions.map((item) => item.id).toSet();
+    final savedOrder = (data['navigationOrder'] as List?)
+            ?.map((item) => item.toString())
+            .where(validNavigationIds.contains)
+            .toList() ??
+        const <String>[];
+    navigationOrder = [
+      ...savedOrder.toSet(),
+      ...defaultNavigationOrder.where((id) => !savedOrder.contains(id))
+    ];
+    navigationVisible = (data['navigationVisible'] as List?)
+            ?.map((item) => item.toString())
+            .where(validNavigationIds.contains)
+            .toSet() ??
+        defaultNavigationVisible.toSet();
+    navigationLabels = (data['navigationLabels'] as Map?)
+            ?.map((key, value) => MapEntry(key.toString(), value.toString())) ??
+        {};
+    navigationLabels.removeWhere((key, value) =>
+        !validNavigationIds.contains(key) || value.trim().isEmpty);
   }
 
   void _replaceData(Map<String, dynamic> data) {
@@ -622,7 +687,10 @@ class SkillStore extends ChangeNotifier {
         'purpleSkills': purpleSkills,
         'maxSkillRank': maxSkillRank,
         'selectedCharacterId': selectedCharacterId,
-        'page': page
+        'page': page,
+        'navigationOrder': navigationOrder,
+        'navigationVisible': navigationVisible.toList(),
+        'navigationLabels': navigationLabels
       };
   void _save() {
     _prefs?.setString(storageKey, jsonEncode(_json()));
@@ -906,6 +974,20 @@ class SkillStore extends ChangeNotifier {
 
   void setPage(int value) {
     page = value;
+    _save();
+    notifyListeners();
+  }
+
+  void setNavigationConfiguration(List<String> order, Set<String> visible,
+      [Map<String, String> labels = const {}]) {
+    final validIds = navigationPageOptions.map((item) => item.id).toSet();
+    navigationOrder = [
+      ...order.where(validIds.contains).toSet(),
+      ...defaultNavigationOrder.where((id) => !order.contains(id))
+    ];
+    navigationVisible = visible.where(validIds.contains).toSet();
+    navigationLabels = Map.fromEntries(labels.entries.where((entry) =>
+        validIds.contains(entry.key) && entry.value.trim().isNotEmpty));
     _save();
     notifyListeners();
   }
@@ -1498,6 +1580,7 @@ class BattleSkillsApp extends StatelessWidget {
       builder: (context, child) => MaterialApp(
           debugShowCheckedModeBanner: false,
           title: '百战异闻录 · 技能统计',
+          scrollBehavior: const _DesktopScrollBehavior(),
           themeMode: store.themeMode,
           theme: ThemeData(
               useMaterial3: true,
@@ -1532,6 +1615,7 @@ class BattleSkillsApp extends StatelessWidget {
               inputDecorationTheme: InputDecorationTheme(filled: true, fillColor: const Color(0xfff7f9f8), isDense: true, labelStyle: const TextStyle(color: muted, fontSize: 12, fontWeight: FontWeight.w400), floatingLabelStyle: const TextStyle(color: teal, fontSize: 12, fontWeight: FontWeight.w400), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: line)), enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: line)), focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: teal, width: 1.2)), contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11)),
               visualDensity: VisualDensity.compact,
               dividerTheme: const DividerThemeData(color: line, space: 1, thickness: 1),
+              checkboxTheme: CheckboxThemeData(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)), side: const BorderSide(color: teal, width: 1.5), fillColor: WidgetStateProperty.resolveWith((states) => states.contains(WidgetState.selected) ? teal : Colors.transparent), checkColor: const WidgetStatePropertyAll<Color>(Colors.white)),
               appBarTheme: const AppBarTheme(centerTitle: false, titleSpacing: 24, backgroundColor: Colors.white, surfaceTintColor: Colors.transparent),
               navigationBarTheme: const NavigationBarThemeData(height: 62, labelTextStyle: WidgetStatePropertyAll(TextStyle(fontSize: 11, fontWeight: FontWeight.w600)), indicatorColor: Color(0xffe5f3ed)),
               chipTheme: ChipThemeData(backgroundColor: const Color(0xfff7f9f8), side: const BorderSide(color: line), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: ink)),
@@ -1540,6 +1624,16 @@ class BattleSkillsApp extends StatelessWidget {
               cardColor: Colors.white),
           darkTheme: ThemeData(useMaterial3: true, brightness: Brightness.dark, scaffoldBackgroundColor: const Color(0xff121816), colorScheme: ColorScheme.fromSeed(seedColor: teal, brightness: Brightness.dark).copyWith(primary: const Color(0xff76c7a7)), fontFamily: 'Arial', visualDensity: VisualDensity.compact, inputDecorationTheme: InputDecorationTheme(filled: true, fillColor: const Color(0xff1c2521), isDense: true, border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11)), popupMenuTheme: const PopupMenuThemeData(elevation: 0, shadowColor: Colors.transparent, surfaceTintColor: Colors.transparent), navigationBarTheme: const NavigationBarThemeData(height: 62)),
           home: Shell(store: store)));
+}
+
+class _DesktopScrollBehavior extends MaterialScrollBehavior {
+  const _DesktopScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        ...super.dragDevices,
+        PointerDeviceKind.mouse,
+      };
 }
 
 class Shell extends StatelessWidget {
@@ -1690,40 +1784,64 @@ class SideNav extends StatelessWidget {
   const SideNav({required this.store, super.key});
   final SkillStore store;
   @override
-  Widget build(BuildContext context) => Container(
-      width: 190,
-      decoration: const BoxDecoration(
-          color: Colors.white, border: Border(right: BorderSide(color: line))),
-      padding: const EdgeInsets.fromLTRB(16, 22, 12, 16),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Padding(
-            padding: EdgeInsets.only(left: 10, bottom: 26),
-            child: Row(children: [
-              Icon(Icons.auto_awesome, color: teal),
-              SizedBox(width: 10),
-              Text('百战异闻录',
-                  style: TextStyle(
-                      color: ink, fontSize: 18, fontWeight: FontWeight.w700))
-            ])),
-        ...[
-          ('首页', Icons.dashboard_outlined),
-          ('重要技能', Icons.star_border),
-          ('可交易技能', Icons.auto_awesome_outlined),
-          ('所有技能', Icons.account_tree_outlined),
-          ('设置', Icons.settings_outlined)
-        ].asMap().entries.map((entry) => NavItem(
-            label: entry.value.$1,
-            icon: entry.value.$2,
-            selected:
-                store.page == entry.key || (entry.key == 4 && store.page >= 4),
-            onTap: () => store.setPage(entry.key))),
-        const Spacer(),
-        Text(
-            '${store.activeCharacters.length} 个角色 · ${store.bosses.length} 个首领',
-            style: const TextStyle(color: muted, fontSize: 12)),
-        const SizedBox(height: 6),
-        const Text('数据自动保存在本机', style: TextStyle(color: muted, fontSize: 11))
-      ]));
+  Widget build(BuildContext context) {
+    final configuredItems = store.navigationOrder
+        .where(store.navigationVisible.contains)
+        .map((id) => navigationPageOptions.firstWhere((item) => item.id == id));
+    final items = [
+      const NavigationPageOption(
+          id: 'home', label: '首页', icon: Icons.dashboard_outlined, page: 0),
+      ...configuredItems,
+      const NavigationPageOption(
+          id: 'settings', label: '设置', icon: Icons.settings_outlined, page: 4)
+    ];
+    return Container(
+        width: 190,
+        decoration: const BoxDecoration(
+            color: Colors.white,
+            border: Border(right: BorderSide(color: line))),
+        padding: const EdgeInsets.fromLTRB(16, 22, 12, 16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Padding(
+              padding: EdgeInsets.only(left: 10, bottom: 26),
+              child: Row(children: [
+                Icon(Icons.auto_awesome, color: teal),
+                SizedBox(width: 10),
+                Text('百战异闻录',
+                    style: TextStyle(
+                        color: ink, fontSize: 18, fontWeight: FontWeight.w700))
+              ])),
+          ...items.map((item) => NavItem(
+              label: store.navigationLabels[item.id] ?? item.label,
+              icon: item.icon,
+              selected: store.page == item.page ||
+                  (item.page == 4 && (store.page == 4 || store.page == 7)),
+              onTap: () => store.setPage(item.page))),
+          const Spacer(),
+          Text(
+              '${store.activeCharacters.length} 个角色 · ${store.bosses.length} 个首领',
+              style: const TextStyle(color: muted, fontSize: 12)),
+          const SizedBox(height: 6),
+          const Text('数据自动保存在本机', style: TextStyle(color: muted, fontSize: 11)),
+          const SizedBox(height: 4),
+          const AppVersionText(fontSize: 11)
+        ]));
+  }
+}
+
+class AppVersionText extends StatelessWidget {
+  const AppVersionText({this.fontSize = 12, super.key});
+  final double fontSize;
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<PackageInfo>(
+      future: PackageInfo.fromPlatform(),
+      builder: (context, snapshot) {
+        final info = snapshot.data;
+        return Text(
+            info == null ? '版本读取中…' : '版本 ${info.version}+${info.buildNumber}',
+            style: TextStyle(color: muted, fontSize: fontSize));
+      });
 }
 
 class NavItem extends StatelessWidget {
@@ -1858,15 +1976,28 @@ class PageBody extends StatelessWidget {
 }
 
 double _filterItemWidth(double maxWidth, int itemCount) {
-  final columns = maxWidth >= 900
+  final columns = itemCount <= 3
       ? itemCount
-      : maxWidth >= 640
-          ? math.min(itemCount, 3)
-          : maxWidth >= 360
-              ? math.min(itemCount, 2)
-              : 1;
+      : maxWidth >= 900
+          ? itemCount
+          : maxWidth >= 640
+              ? math.min(itemCount, 3)
+              : maxWidth >= 360
+                  ? math.min(itemCount, 2)
+                  : 1;
   final width = (maxWidth - (columns - 1) * 10) / columns;
-  return math.min(width, 280.0);
+  return itemCount <= 3 ? width : math.min(width, 280.0);
+}
+
+double _singleLineTextWidth(
+    BuildContext context, String text, TextStyle style) {
+  final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1)
+    ..layout();
+  return painter.width;
 }
 
 Widget _equalCardRow(List<Widget> cards, double maxWidth) {
@@ -1890,13 +2021,15 @@ class _FilterDropdown<T> extends StatefulWidget {
       required this.itemLabel,
       required this.width,
       required this.onChanged,
-      this.compactLabel});
+      this.compactLabel,
+      this.searchable = false});
   final T value;
   final List<T> values;
   final String Function(T value) itemLabel;
   final String Function(T value)? compactLabel;
   final double width;
   final ValueChanged<T?> onChanged;
+  final bool searchable;
 
   @override
   State<_FilterDropdown<T>> createState() => _FilterDropdownState<T>();
@@ -1905,7 +2038,14 @@ class _FilterDropdown<T> extends StatefulWidget {
 class _FilterDropdownState<T> extends State<_FilterDropdown<T>> {
   final _layerLink = LayerLink();
   final _menuController = OverlayPortalController();
+  final _searchController = TextEditingController();
   double _menuHeight = 0;
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   void _closeMenu() {
     if (_menuController.isShowing) _menuController.hide();
@@ -1933,7 +2073,10 @@ class _FilterDropdownState<T> extends State<_FilterDropdown<T>> {
           curve: Curves.easeOut);
       if (!mounted) return;
     }
-    _menuHeight = math.min(math.min(widget.values.length * 44.0 + 12, 300.0),
+    _searchController.clear();
+    final searchHeight = widget.searchable ? 50.0 : 0.0;
+    _menuHeight = math.min(
+        math.min(widget.values.length * 44.0 + 12 + searchHeight, 300.0),
         math.max(0.0, _spaceBelow()));
     if (_menuHeight < 1) return;
     _menuController.show();
@@ -1941,6 +2084,12 @@ class _FilterDropdownState<T> extends State<_FilterDropdown<T>> {
 
   Widget _buildMenu(BuildContext context) {
     final menuWidth = math.min(widget.width * 0.82, 224.0);
+    final query = _searchController.text.trim().toLowerCase();
+    final values = widget.values
+        .where((item) =>
+            query.isEmpty ||
+            widget.itemLabel(item).toLowerCase().contains(query))
+        .toList();
     return Stack(children: [
       Positioned.fill(
           child: GestureDetector(
@@ -1961,37 +2110,67 @@ class _FilterDropdownState<T> extends State<_FilterDropdown<T>> {
                       borderRadius: BorderRadius.circular(14),
                       side: const BorderSide(color: Color(0xffd5e8df))),
                   clipBehavior: Clip.antiAlias,
-                  child: ListView.builder(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      itemCount: widget.values.length,
-                      itemBuilder: (context, index) {
-                        final item = widget.values[index];
-                        return InkWell(
-                            onTap: () {
-                              _closeMenu();
-                              widget.onChanged(item);
-                            },
-                            child: SizedBox(
-                                height: 44,
-                                child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 12),
-                                    child: Row(children: [
-                                      SizedBox(
-                                          width: 18,
-                                          child: item == widget.value
-                                              ? const Icon(Icons.check,
-                                                  size: 15, color: teal)
-                                              : null),
-                                      const SizedBox(width: 5),
-                                      Expanded(
-                                          child: Text(widget.itemLabel(item),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(
-                                                  color: ink, fontSize: 12)))
-                                    ]))));
-                      }))))
+                  child: Column(children: [
+                    if (widget.searchable)
+                      Padding(
+                          padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
+                          child: SizedBox(
+                              height: 40,
+                              child: TextField(
+                                  controller: _searchController,
+                                  autofocus: true,
+                                  onChanged: (_) => setState(() {}),
+                                  decoration: const InputDecoration(
+                                      isDense: true,
+                                      prefixIcon: Icon(Icons.search, size: 16),
+                                      prefixIconConstraints:
+                                          BoxConstraints(minWidth: 32),
+                                      hintText: '输入筛选')))),
+                    Expanded(
+                        child: values.isEmpty
+                            ? const Center(
+                                child: Text('没有匹配项',
+                                    style:
+                                        TextStyle(color: muted, fontSize: 12)))
+                            : ListView.builder(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 6),
+                                itemCount: values.length,
+                                itemBuilder: (context, index) {
+                                  final item = values[index];
+                                  return InkWell(
+                                      onTap: () {
+                                        _closeMenu();
+                                        widget.onChanged(item);
+                                      },
+                                      child: SizedBox(
+                                          height: 44,
+                                          child: Padding(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 12),
+                                              child: Row(children: [
+                                                SizedBox(
+                                                    width: 18,
+                                                    child: item == widget.value
+                                                        ? const Icon(
+                                                            Icons.check,
+                                                            size: 15,
+                                                            color: teal)
+                                                        : null),
+                                                const SizedBox(width: 5),
+                                                Expanded(
+                                                    child: Text(
+                                                        widget.itemLabel(item),
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        style: const TextStyle(
+                                                            color: ink,
+                                                            fontSize: 12)))
+                                              ]))));
+                                }))
+                  ]))))
     ]);
   }
 
@@ -2268,7 +2447,7 @@ class _CharacterFilterPanelState extends State<CharacterFilterPanel> {
             }, width),
             _filterSelect('门派', school, ['全部', ...schoolOptions], (value) {
               setState(() => school = value!);
-            }, width)
+            }, width, searchable: true)
           ]);
         }),
         const SizedBox(height: 15),
@@ -2288,12 +2467,14 @@ class _CharacterFilterPanelState extends State<CharacterFilterPanel> {
       ]));
 
   Widget _filterSelect(String label, String value, List<String> values,
-          ValueChanged<String?> onChanged, double width) =>
+          ValueChanged<String?> onChanged, double width,
+          {bool searchable = false}) =>
       _FilterDropdown<String>(
           value: value,
           values: values,
           itemLabel: (item) => item,
           width: width,
+          searchable: searchable,
           onChanged: onChanged);
 }
 
@@ -2350,6 +2531,8 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   bool syncing = false;
   String cdFilter = '全部';
+  String schoolFilter = '全部';
+  String positionFilter = '全部';
 
   SkillStore get store => widget.store;
 
@@ -2357,9 +2540,13 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final character = store.selectedCharacter;
     final visibleCharacters = store.activeCharacters.where((item) {
-      if (cdFilter == '已完成') return item.weeklyCompleted;
-      if (cdFilter == '未完成') return !item.weeklyCompleted;
-      return true;
+      final matchesCd = cdFilter == '全部' ||
+          (cdFilter == '已完成' && item.weeklyCompleted) ||
+          (cdFilter == '未完成' && !item.weeklyCompleted);
+      final matchesSchool = schoolFilter == '全部' || item.school == schoolFilter;
+      final matchesPosition =
+          positionFilter == '全部' || item.position == positionFilter;
+      return matchesCd && matchesSchool && matchesPosition;
     }).toList();
     return PageBody(
         title: '首页',
@@ -2369,16 +2556,36 @@ class _HomePageState extends State<HomePage> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           _syncStatusBar(context),
           const SizedBox(height: 14),
-          Align(
-              alignment: Alignment.centerLeft,
-              child: _FilterDropdown<String>(
+          LayoutBuilder(builder: (context, constraints) {
+            final width = _filterItemWidth(constraints.maxWidth, 3);
+            return Wrap(spacing: 10, runSpacing: 10, children: [
+              _FilterDropdown<String>(
                   value: cdFilter,
                   values: const ['全部', '未完成', '已完成'],
                   itemLabel: (value) => value == '全部' ? '全部本周 CD' : value,
                   compactLabel: (value) => value == '全部' ? '本周 CD' : value,
-                  width: 170,
+                  width: width,
                   onChanged: (value) =>
-                      setState(() => cdFilter = value ?? '全部'))),
+                      setState(() => cdFilter = value ?? '全部')),
+              _FilterDropdown<String>(
+                  value: schoolFilter,
+                  values: const ['全部', ...schoolOptions],
+                  itemLabel: (value) => value == '全部' ? '全部门派' : value,
+                  compactLabel: (value) => value == '全部' ? '门派' : value,
+                  width: width,
+                  searchable: true,
+                  onChanged: (value) =>
+                      setState(() => schoolFilter = value ?? '全部')),
+              _FilterDropdown<String>(
+                  value: positionFilter,
+                  values: const ['全部', ...positionOptions],
+                  itemLabel: (value) => value == '全部' ? '全部定位' : value,
+                  compactLabel: (value) => value == '全部' ? '定位' : value,
+                  width: width,
+                  onChanged: (value) =>
+                      setState(() => positionFilter = value ?? '全部'))
+            ]);
+          }),
           const SizedBox(height: 10),
           CharacterSwitcher(store: store, characters: visibleCharacters),
           const SizedBox(height: 14),
@@ -2399,20 +2606,20 @@ class _HomePageState extends State<HomePage> {
                   Text(
                       character == null
                           ? '请先添加一个角色'
-                          : '当前查看：${character.name} · ${character.school} · ${character.mind}',
+                          : '当前查看：${character.name} · ${character.school} · ${character.mind} · 换将点 ${character.swapPoints}',
                       style: const TextStyle(color: muted, fontSize: 12))
                 ])),
             if (character != null)
               Row(mainAxisSize: MainAxisSize.min, children: [
-                Checkbox(
-                    value: character.weeklyCompleted,
-                    onChanged: (value) =>
-                        store.setWeeklyCompleted(character, value ?? false)),
+                Transform.scale(
+                    scale: .9,
+                    child: Checkbox(
+                        value: character.weeklyCompleted,
+                        onChanged: (value) => store.setWeeklyCompleted(
+                            character, value ?? false))),
                 Text(character.weeklyCompleted ? '本周 CD 已完成' : '本周 CD 未完成',
-                    style: TextStyle(
-                        color: character.weeklyCompleted ? teal : muted,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12))
+                    style: const TextStyle(
+                        color: teal, fontWeight: FontWeight.w600, fontSize: 12))
               ])
           ])),
           const SizedBox(height: 18),
@@ -2820,7 +3027,7 @@ class MindAvatar extends StatelessWidget {
   }
 }
 
-class CharacterSwitcher extends StatelessWidget {
+class CharacterSwitcher extends StatefulWidget {
   const CharacterSwitcher(
       {required this.store, this.onSelected, this.characters, super.key});
   final SkillStore store;
@@ -2828,89 +3035,136 @@ class CharacterSwitcher extends StatelessWidget {
   final List<CharacterData>? characters;
 
   @override
+  State<CharacterSwitcher> createState() => _CharacterSwitcherState();
+}
+
+class _CharacterSwitcherState extends State<CharacterSwitcher> {
+  final ScrollController _controller = ScrollController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _handlePointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || !_controller.hasClients) return;
+    final delta =
+        event.scrollDelta.dx != 0 ? event.scrollDelta.dx : event.scrollDelta.dy;
+    if (delta == 0) return;
+
+    GestureBinding.instance.pointerSignalResolver.register(event, (_) {
+      final position = _controller.position;
+      _controller.jumpTo((_controller.offset + delta)
+          .clamp(position.minScrollExtent, position.maxScrollExtent)
+          .toDouble());
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final visibleCharacters = characters ?? store.activeCharacters;
-    return SizedBox(
-        height: 82,
-        child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: visibleCharacters.length + 1,
-            separatorBuilder: (_, __) => const SizedBox(width: 10),
-            itemBuilder: (context, index) {
-              if (index == visibleCharacters.length) {
-                return InkWell(
-                    onTap: () => showCharacterDialog(context, store),
-                    borderRadius: BorderRadius.circular(10),
-                    child: Container(
-                        width: 128,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                            color: const Color(0xfff7f9f8),
-                            border: Border.all(color: teal),
-                            borderRadius: BorderRadius.circular(10)),
-                        child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.add, color: teal, size: 20),
-                              SizedBox(width: 6),
-                              Text('添加角色',
-                                  style: TextStyle(
-                                      color: teal,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w700))
-                            ])));
-              }
-              final character = visibleCharacters[index];
-              final active = character.id == store.selectedCharacterId;
-              final completed = character.weeklyCompleted;
-              return InkWell(
-                  onTap: () {
-                    store.selectCharacter(character.id);
-                    onSelected?.call(character.id);
-                  },
-                  onDoubleTap: () =>
-                      showCharacterDialog(context, store, character: character),
-                  borderRadius: BorderRadius.circular(10),
-                  child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 160),
-                      width: 166,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 10),
-                      decoration: BoxDecoration(
-                          color: completed
-                              ? const Color(0xffe2f3eb)
-                              : active
-                                  ? const Color(0xffedf7f3)
-                                  : const Color(0xfff7f9f8),
-                          border: Border.all(
-                              color: completed || active ? teal : line,
-                              width: completed ? 1.5 : 1),
-                          borderRadius: BorderRadius.circular(10)),
-                      child: Row(children: [
-                        MindAvatar(character: character),
-                        const SizedBox(width: 8),
-                        Expanded(
-                            child: Column(
+    final visibleCharacters =
+        widget.characters ?? widget.store.activeCharacters;
+    return Listener(
+        onPointerSignal: _handlePointerSignal,
+        child: SizedBox(
+            height: 82,
+            child: ListView.separated(
+                controller: _controller,
+                scrollDirection: Axis.horizontal,
+                itemCount: visibleCharacters.length + 1,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (context, index) {
+                  if (index == visibleCharacters.length) {
+                    return InkWell(
+                        onTap: () => showCharacterDialog(context, widget.store),
+                        borderRadius: BorderRadius.circular(10),
+                        child: Container(
+                            width: 128,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                                color: const Color(0xfff7f9f8),
+                                border: Border.all(color: teal),
+                                borderRadius: BorderRadius.circular(10)),
+                            child: const Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                              Text(character.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                      color: active ? teal : ink,
+                                  Icon(Icons.add, color: teal, size: 20),
+                                  SizedBox(width: 6),
+                                  Text('添加角色',
+                                      style: TextStyle(
+                                          color: teal,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w700))
+                                ])));
+                  }
+                  final character = visibleCharacters[index];
+                  final active =
+                      character.id == widget.store.selectedCharacterId;
+                  final completed = character.weeklyCompleted;
+                  final minds = schoolMindPositions[character.school];
+                  final characterLabel =
+                      minds?.length == 1 ? character.school : character.mind;
+                  final subtitle = '$characterLabel · ${character.swapPoints}';
+                  final characterWidth = math.max(
+                      166.0,
+                      math.max(
+                              _singleLineTextWidth(
+                                  context,
+                                  character.name,
+                                  const TextStyle(
                                       fontSize: 14,
                                       fontWeight: FontWeight.w700)),
-                              const SizedBox(height: 3),
-                              Text(
-                                  '${character.school} · ${character.mind} · ${character.swapPoints} 换将点',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      color: muted, fontSize: 10))
-                            ]))
-                      ])));
-            }));
+                              _singleLineTextWidth(context, subtitle,
+                                  const TextStyle(fontSize: 10))) +
+                          70);
+                  return InkWell(
+                      onTap: () {
+                        widget.store.selectCharacter(character.id);
+                        widget.onSelected?.call(character.id);
+                      },
+                      onDoubleTap: () => showCharacterDialog(
+                          context, widget.store, character: character),
+                      borderRadius: BorderRadius.circular(10),
+                      child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 160),
+                          width: characterWidth,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                              color: completed
+                                  ? const Color(0xffe2f3eb)
+                                  : active
+                                      ? const Color(0xffedf7f3)
+                                      : const Color(0xfff7f9f8),
+                              border: Border.all(
+                                  color: completed || active ? teal : line,
+                                  width: completed ? 1.5 : 1),
+                              borderRadius: BorderRadius.circular(10)),
+                          child: Row(children: [
+                            MindAvatar(character: character),
+                            const SizedBox(width: 8),
+                            Expanded(
+                                child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                  Text(character.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                          color: active ? teal : ink,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w700)),
+                                  const SizedBox(height: 3),
+                                  Text(subtitle,
+                                      maxLines: 1,
+                                      style: const TextStyle(
+                                          color: muted, fontSize: 10))
+                                ]))
+                          ])));
+                })));
   }
 }
 
@@ -3596,6 +3850,7 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
                       .firstWhere((item) => item.id == value)
                       .name,
               width: width,
+              searchable: true,
               onChanged: (value) =>
                   setState(() => characterId = value ?? 'all')),
           _NameAutocomplete(
@@ -4374,69 +4629,181 @@ class SettingsPage extends StatelessWidget {
   Widget build(BuildContext context) => PageBody(
       title: '设置',
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _settingsSection(
-            icon: Icons.palette_outlined,
-            title: '外观',
-            child: Column(children: [
-              ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(
-                      store.themeMode == ThemeMode.dark
-                          ? Icons.dark_mode_outlined
-                          : Icons.light_mode_outlined,
-                      color: teal),
-                  title: const Text('主题',
-                      style: TextStyle(color: ink, fontSize: 13)),
-                  subtitle: const Text('可选择浅色、深色或跟随系统',
-                      style: TextStyle(color: muted, fontSize: 12)),
-                  trailing: TextButton(
-                      onPressed: () => _selectThemeMode(context),
-                      child: Text(themeModeLabel(store.themeMode))))
-            ])),
-        const SizedBox(height: 16),
-        _settingsSection(
-            icon: Icons.sync_outlined,
+        _SettingCard(
+            icon: store.themeMode == ThemeMode.dark
+                ? Icons.dark_mode_outlined
+                : Icons.light_mode_outlined,
+            title: '外观模式',
+            subtitle: '浅色、深色，或自动跟随系统设置',
+            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+              Text(themeModeLabel(store.themeMode),
+                  style: const TextStyle(color: muted, fontSize: 12)),
+              const SizedBox(width: 4),
+              const Icon(Icons.chevron_right, color: muted, size: 20)
+            ]),
+            onTap: () => _selectThemeMode(context)),
+        const SizedBox(height: 10),
+        _SettingCard(
+            icon: Icons.view_sidebar_outlined,
+            title: '导航栏配置',
+            subtitle: '选择左侧显示的页面，并拖动调整顺序',
+            onTap: () => _configureNavigation(context)),
+        const SizedBox(height: 10),
+        _SettingCard(
+            icon: Icons.cloud_sync_outlined,
             title: '同步与备份',
-            child: ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.cloud_sync_outlined, color: teal),
-                title: const Text('同步与备份设置',
-                    style: TextStyle(color: ink, fontSize: 14)),
-                subtitle: Text(
-                    store.syncConfig?.isValid == true
-                        ? '${store.syncMessage ?? 'WebDAV 已配置'} · 点击进入管理'
-                        : '本地备份、WebDAV 同步与远程恢复',
-                    style: const TextStyle(color: muted, fontSize: 12)),
-                trailing: const Icon(Icons.chevron_right, color: muted),
-                onTap: () => store.setPage(7))),
-        const SizedBox(height: 16),
-        _settingsSection(
+            subtitle: store.syncConfig?.isValid == true
+                ? store.syncMessage ?? 'WebDAV 已配置 · 点击进入管理'
+                : '本地备份、WebDAV 同步与远程恢复',
+            onTap: () => store.setPage(7)),
+        const SizedBox(height: 10),
+        _SettingCard(
             icon: Icons.groups_outlined,
             title: '角色管理',
-            child: ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.groups_outlined, color: teal),
-                title: const Text('角色列表',
-                    style: TextStyle(color: ink, fontSize: 14)),
-                subtitle: Text(
-                    '${store.activeCharacters.length} 个角色 · 点击进入角色列表，可添加、编辑或删除',
-                    style: const TextStyle(color: muted, fontSize: 12)),
-                trailing: const Icon(Icons.chevron_right, color: muted),
-                onTap: () => store.setPage(5))),
-        const SizedBox(height: 16),
-        _settingsSection(
+            subtitle: '${store.activeCharacters.length} 个角色 · 添加、编辑或删除角色',
+            onTap: () => store.setPage(5)),
+        const SizedBox(height: 10),
+        _SettingCard(
             icon: Icons.edit_note_outlined,
             title: '首领管理',
-            child: ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.edit_note_outlined, color: teal),
-                title: const Text('首领列表',
-                    style: TextStyle(color: ink, fontSize: 14)),
-                subtitle: Text('${store.bosses.length} 个首领 · 点击进入页面管理首领和所属技能',
-                    style: const TextStyle(color: muted, fontSize: 12)),
-                trailing: const Icon(Icons.chevron_right, color: muted),
-                onTap: () => store.setPage(6)))
+            subtitle: '${store.bosses.length} 个首领 · 管理首领和所属技能',
+            onTap: () => store.setPage(6)),
+        const SizedBox(height: 10),
+        const _UpdateSettingCard(),
+        const SizedBox(height: 16),
+        const AppVersionText()
       ]));
+
+  Future<void> _configureNavigation(BuildContext context) async {
+    final order = [...store.navigationOrder];
+    final visible = {...store.navigationVisible};
+    final labels = {...store.navigationLabels};
+    final saved = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+                    title: const Text('导航栏配置'),
+                    content: SizedBox(
+                        width: 420,
+                        height: 340,
+                        child: ReorderableListView.builder(
+                            buildDefaultDragHandles: false,
+                            itemCount: order.length,
+                            onReorder: (oldIndex, newIndex) {
+                              setDialogState(() {
+                                if (newIndex > oldIndex) newIndex--;
+                                final item = order.removeAt(oldIndex);
+                                order.insert(newIndex, item);
+                              });
+                            },
+                            itemBuilder: (context, index) {
+                              final option = navigationPageOptions.firstWhere(
+                                  (item) => item.id == order[index]);
+                              return ListTile(
+                                  key: ValueKey(option.id),
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: Checkbox(
+                                      value: visible.contains(option.id),
+                                      onChanged: (value) => setDialogState(() {
+                                            if (value == true) {
+                                              visible.add(option.id);
+                                            } else {
+                                              visible.remove(option.id);
+                                            }
+                                          })),
+                                  title:
+                                      Text(labels[option.id] ?? option.label),
+                                  subtitle: labels.containsKey(option.id)
+                                      ? Text('原名称：${option.label}',
+                                          style: const TextStyle(
+                                              color: muted, fontSize: 11))
+                                      : null,
+                                  trailing: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                            tooltip: '修改名称',
+                                            onPressed: () async {
+                                              final renamed =
+                                                  await _renameNavigationItem(
+                                                      context,
+                                                      labels[option.id] ??
+                                                          option.label);
+                                              if (renamed != null) {
+                                                setDialogState(() {
+                                                  if (renamed == option.label) {
+                                                    labels.remove(option.id);
+                                                  } else {
+                                                    labels[option.id] = renamed;
+                                                  }
+                                                });
+                                              }
+                                            },
+                                            icon: const Icon(
+                                                Icons.edit_outlined,
+                                                size: 18)),
+                                        ReorderableDragStartListener(
+                                            index: index,
+                                            child: const Padding(
+                                                padding: EdgeInsets.all(10),
+                                                child: Icon(
+                                                    Icons.drag_indicator,
+                                                    color: muted)))
+                                      ]));
+                            })),
+                    actions: [
+                      TextButton(
+                          onPressed: () {
+                            setDialogState(() {
+                              order
+                                ..clear()
+                                ..addAll(defaultNavigationOrder);
+                              visible
+                                ..clear()
+                                ..addAll(defaultNavigationVisible);
+                              labels.clear();
+                            });
+                          },
+                          child: const Text('恢复默认')),
+                      TextButton(
+                          onPressed: () => Navigator.pop(dialogContext, false),
+                          child: const Text('取消')),
+                      FilledButton(
+                          onPressed: () => Navigator.pop(dialogContext, true),
+                          child: const Text('保存'))
+                    ])));
+    if (saved == true) {
+      store.setNavigationConfiguration(order, visible, labels);
+    }
+  }
+
+  Future<String?> _renameNavigationItem(
+      BuildContext context, String currentName) async {
+    final controller = TextEditingController(text: currentName);
+    final value = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+                title: const Text('修改导航名称'),
+                content: TextField(
+                    controller: controller,
+                    autofocus: true,
+                    maxLength: 8,
+                    decoration: const InputDecoration(labelText: '显示名称')),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      child: const Text('取消')),
+                  FilledButton(
+                      onPressed: () {
+                        final name = controller.text.trim();
+                        if (name.isNotEmpty) Navigator.pop(dialogContext, name);
+                      },
+                      child: const Text('确定'))
+                ]));
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    controller.dispose();
+    return value;
+  }
 
   Future<void> _selectThemeMode(BuildContext context) async {
     final selected = await showDialog<ThemeMode>(
@@ -4452,24 +4819,147 @@ class SettingsPage extends StatelessWidget {
                 .toList()));
     if (selected != null) await store.setThemeMode(selected);
   }
+}
 
-  Widget _settingsSection(
-          {required IconData icon,
-          required String title,
-          required Widget child}) =>
-      CardShell(
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Icon(icon, color: teal),
-          const SizedBox(width: 9),
-          Text(title,
-              style: const TextStyle(
-                  color: ink, fontSize: 16, fontWeight: FontWeight.w600))
-        ]),
-        const SizedBox(height: 10),
-        child
-      ]));
+class _SettingCard extends StatelessWidget {
+  const _SettingCard(
+      {required this.icon,
+      required this.title,
+      required this.subtitle,
+      required this.onTap,
+      this.trailing});
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+          decoration: BoxDecoration(
+              border: Border.all(color: line),
+              borderRadius: BorderRadius.circular(10)),
+          child: Row(children: [
+            Icon(icon, color: teal, size: 21),
+            const SizedBox(width: 12),
+            Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(title,
+                      style: const TextStyle(
+                          color: ink,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 3),
+                  Text(subtitle,
+                      style: const TextStyle(color: muted, fontSize: 12))
+                ])),
+            trailing ?? const Icon(Icons.chevron_right, color: muted, size: 20)
+          ])));
+}
+
+class _UpdateSettingCard extends StatefulWidget {
+  const _UpdateSettingCard();
+
+  @override
+  State<_UpdateSettingCard> createState() => _UpdateSettingCardState();
+}
+
+class _UpdateSettingCardState extends State<_UpdateSettingCard> {
+  final UpdateService _updateService = UpdateService();
+  late final Future<PackageInfo> _packageInfo = PackageInfo.fromPlatform();
+  bool _checking = false;
+
+  @override
+  Widget build(BuildContext context) => _SettingCard(
+      icon: Icons.system_update_outlined,
+      title: '检查更新',
+      subtitle: _checking ? '正在查询 GitHub Release…' : '查询新版本并下载当前平台安装包',
+      trailing: _checking
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2))
+          : null,
+      onTap: _checking ? () {} : _checkForUpdates);
+
+  Future<void> _checkForUpdates() async {
+    setState(() => _checking = true);
+    try {
+      final results = await Future.wait([
+        _packageInfo,
+        _updateService.fetchLatestRelease(),
+      ]);
+      final packageInfo = results[0] as PackageInfo;
+      final release = results[1] as AppRelease;
+      if (!mounted) return;
+      setState(() => _checking = false);
+      if (!isVersionNewer(release.version, packageInfo.version)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('当前已是最新版本 v${packageInfo.version}')));
+        return;
+      }
+      await _showUpdateDialog(release, packageInfo.version);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _checking = false);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('检查更新失败：$error')));
+    }
+  }
+
+  Future<void> _showUpdateDialog(
+      AppRelease release, String currentVersion) async {
+    final download = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+                title: Text('发现新版本 v${release.version}'),
+                content: SizedBox(
+                    width: 500,
+                    child: SingleChildScrollView(
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                          Text(
+                              '当前版本 v$currentVersion · 最新版本 v${release.version}',
+                              style:
+                                  const TextStyle(color: muted, fontSize: 12)),
+                          if (release.notes.trim().isNotEmpty) ...[
+                            const SizedBox(height: 14),
+                            const Text('更新内容',
+                                style: TextStyle(
+                                    fontSize: 13, fontWeight: FontWeight.w600)),
+                            const SizedBox(height: 7),
+                            SelectableText(release.notes.trim(),
+                                style:
+                                    const TextStyle(fontSize: 12, height: 1.5))
+                          ]
+                        ]))),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(dialogContext, false),
+                      child: const Text('稍后')),
+                  FilledButton.icon(
+                      onPressed: () => Navigator.pop(dialogContext, true),
+                      icon: const Icon(Icons.download_outlined, size: 18),
+                      label: const Text('下载更新'))
+                ]));
+    if (download != true) return;
+    final opened = await launchUrl(release.platformDownloadUri,
+        mode: LaunchMode.externalApplication);
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('无法打开下载地址')));
+    }
+  }
 }
 
 class SyncBackupPage extends StatelessWidget {
@@ -5717,6 +6207,8 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                             : null,
                         child: const Text('保存'))
                   ])));
+  // Wait for the dialog route's exit animation before releasing controllers.
+  await Future<void>.delayed(const Duration(milliseconds: 300));
   name.dispose();
   swapPoints.dispose();
 }

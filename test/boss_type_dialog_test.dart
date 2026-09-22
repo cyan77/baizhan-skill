@@ -1,10 +1,29 @@
 import 'package:baizhan_skill/main.dart';
 import 'package:baizhan_skill/boss_catalog_service.dart';
 import 'package:baizhan_skill/sync_service.dart';
+import 'package:baizhan_skill/update_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('release versions compare numerically', () {
+    expect(isVersionNewer('0.1.3', '0.1.2'), isTrue);
+    expect(isVersionNewer('v0.2.0', '0.1.9'), isTrue);
+    expect(isVersionNewer('0.1.2', '0.1.2+3'), isFalse);
+  });
+
+  test('navigation configuration supports visibility and ordering', () {
+    final store = SkillStore();
+    store.setNavigationConfiguration(
+        ['bosses', 'characters', 'all', 'important', 'tradable'],
+        {'bosses', 'all'},
+        {'bosses': '首领技能'});
+
+    expect(store.navigationOrder.first, 'bosses');
+    expect(store.navigationVisible, {'bosses', 'all'});
+    expect(store.navigationLabels['bosses'], '首领技能');
+  });
+
   test('weekly CD uses Monday as the start of each week', () {
     expect(currentWeekKey(DateTime(2026, 9, 21)), '2026-09-21');
     expect(currentWeekKey(DateTime(2026, 9, 27)), '2026-09-21');
@@ -153,6 +172,51 @@ void main() {
     expect(find.text('通本4'), findsOneWidget);
   });
 
+  testWidgets('home character labels and filters show the requested details',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1400, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final store = SkillStore();
+    final dualMind = CharacterData(
+        id: 'dual-mind',
+        name: '双心法角色',
+        gender: '女性',
+        school: '万花',
+        mind: '花间游',
+        position: '输出',
+        swapPoints: 20,
+        levels: const {});
+    final singleMind = CharacterData(
+        id: 'single-mind',
+        name: '单心法角色',
+        gender: '男性',
+        school: '丐帮',
+        mind: '笑尘诀',
+        position: '输出',
+        swapPoints: 8,
+        levels: const {});
+    store.characters.addAll([dualMind, singleMind]);
+    store.selectedCharacterId = dualMind.id;
+
+    await tester
+        .pumpWidget(MaterialApp(home: Scaffold(body: HomePage(store: store))));
+    await tester.pumpAndSettle();
+
+    expect(find.text('花间游 · 20'), findsOneWidget);
+    expect(find.text('丐帮 · 8'), findsOneWidget);
+    expect(find.text('全部门派'), findsOneWidget);
+    expect(find.text('全部定位'), findsOneWidget);
+    expect(find.text('当前查看：双心法角色 · 万花 · 花间游 · 换将点 20'), findsOneWidget);
+
+    await tester.tap(find.text('全部门派'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextField, '输入筛选'), findsOneWidget);
+    await tester.enterText(find.widgetWithText(TextField, '输入筛选'), '万');
+    await tester.pumpAndSettle();
+    expect(find.text('万花'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('editing a Boss type closes its menu and saves cleanly',
       (tester) async {
     final store = SkillStore();
@@ -246,6 +310,36 @@ void main() {
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
     expect(find.text('设置技能最高重'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('closing edit character dialog disposes cleanly', (tester) async {
+    final store = SkillStore();
+    final character = CharacterData(
+        id: 'edit-character',
+        name: '测试角色',
+        gender: '女性',
+        school: '万花',
+        mind: '花间游',
+        position: '输出',
+        levels: const {});
+    store.characters.add(character);
+
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: Builder(
+                builder: (context) => TextButton(
+                    onPressed: () => showCharacterDialog(context, store,
+                        character: character),
+                    child: const Text('编辑角色'))))));
+
+    await tester.tap(find.text('编辑角色'));
+    await tester.pumpAndSettle();
+    expect(find.text('测试角色'), findsOneWidget);
+
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(find.text('编辑角色'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
