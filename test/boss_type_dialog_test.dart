@@ -83,6 +83,45 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('character preview expands skills and edits their ranks',
+      (tester) async {
+    final store = SkillStore();
+    final skill = Skill(id: 'preview-skill', name: '预览技能');
+    store.bosses.add(Boss(
+        id: 'preview-boss',
+        name: '预览首领',
+        spirit: 240,
+        stamina: 560,
+        skills: [skill]));
+    final overrides = <String, int>{};
+
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: Builder(
+                builder: (context) => TextButton(
+                    onPressed: () => showCharacterDraftPreview(
+                        context, store, overrides, 1, '女性'),
+                    child: const Text('打开预览'))))));
+    await tester.tap(find.text('打开预览'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('攻略进度'), findsOneWidget);
+    expect(find.text('收集进度'), findsOneWidget);
+    expect(find.text('精神'), findsOneWidget);
+    expect(find.text('耐力'), findsOneWidget);
+    await tester.tap(find.text('预览首领'));
+    await tester.pumpAndSettle();
+    expect(find.text('预览技能'), findsOneWidget);
+    expect(find.text('1 重'), findsOneWidget);
+
+    await tester.tap(find.text('1 重'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('8 重').last);
+    await tester.pumpAndSettle();
+    expect(overrides['预览技能'], 8);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('home book needs fits inside a narrow fourth card',
       (tester) async {
     final store = SkillStore();

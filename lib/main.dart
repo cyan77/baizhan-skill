@@ -178,16 +178,20 @@ class BossCollectionProgress {
 
 BossCollectionProgress bossCollectionProgress(
     SkillStore store, CharacterData character, Boss boss) {
+  return bossCollectionProgressForLevels(boss, character.gender,
+      (skill) => store.level(character.id, skill.id).clamp(0, 10));
+}
+
+BossCollectionProgress bossCollectionProgressForLevels(
+    Boss boss, String gender, int Function(Skill skill) levelFor) {
   final skills = boss.skills
-      .where((skill) => skillAppliesToGender(skill, character.gender))
+      .where((skill) => skillAppliesToGender(skill, gender))
       .toList();
   if (skills.isEmpty) {
     return const BossCollectionProgress(
         completedRank: 0, strategyRank: 0, collectedSkills: 0, totalSkills: 0);
   }
-  final levels = skills
-      .map((skill) => store.level(character.id, skill.id).clamp(0, 10))
-      .toList();
+  final levels = skills.map((skill) => levelFor(skill).clamp(0, 10)).toList();
   final completedRank = levels.reduce(math.min);
   final strategyRank = math.min(10, completedRank + 1);
   final collectedSkills = levels.where((level) => level >= strategyRank).length;
@@ -5511,17 +5515,38 @@ Map<String, int> parseCharacterImageOcr(
 
 Future<void> showCharacterDraftPreview(BuildContext context, SkillStore store,
     Map<String, int> overrides, int defaultLevel, String gender) async {
+  bool? strategyDescending;
+  final expandedBossIds = <String>{};
   await showDialog<void>(
       context: context,
       builder: (context) => StatefulBuilder(builder: (context, setState) {
             int levelFor(Skill skill) =>
                 (overrides[skill.name] ?? defaultLevel).clamp(1, 10).toInt();
-            int rankFor(Boss boss) => boss.skills.isEmpty
-                ? 0
-                : boss.skills
-                    .where((skill) => skillAppliesToGender(skill, gender))
-                    .map(levelFor)
-                    .reduce((left, right) => math.min(left, right));
+            BossCollectionProgress progressFor(Boss boss) =>
+                bossCollectionProgressForLevels(boss, gender, levelFor);
+            int rankFor(Boss boss) => progressFor(boss).completedRank;
+            final bosses = [...store.bosses];
+            if (strategyDescending != null) {
+              final originalOrder = <String, int>{
+                for (var index = 0; index < bosses.length; index++)
+                  bosses[index].id: index
+              };
+              bosses.sort((left, right) {
+                final leftProgress = progressFor(left);
+                final rightProgress = progressFor(right);
+                var comparison = leftProgress.strategyRank
+                    .compareTo(rightProgress.strategyRank);
+                if (comparison == 0) {
+                  comparison = leftProgress.collectionRatio
+                      .compareTo(rightProgress.collectionRatio);
+                }
+                if (comparison == 0) {
+                  comparison = (originalOrder[left.id] ?? 0)
+                      .compareTo(originalOrder[right.id] ?? 0);
+                }
+                return strategyDescending! ? -comparison : comparison;
+              });
+            }
             const multipliers = [0, 1, 2, 3, 4, 5, 7, 10, 15, 22.5, 33.75];
             final allLevels = store.bosses
                 .expand((boss) => boss.skills)
@@ -5578,58 +5603,155 @@ Future<void> showCharacterDraftPreview(BuildContext context, SkillStore store,
                                 icon: Icons.shield_outlined))
                       ]),
                       const SizedBox(height: 12),
-                      const Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text('首领 / 技能重数',
-                              style: TextStyle(
-                                  color: ink, fontWeight: FontWeight.w700))),
-                      const SizedBox(height: 6),
                       Expanded(
-                          child: ListView(
-                              children: store.bosses
-                                  .map((boss) => ExpansionTile(
-                                      initiallyExpanded: false,
-                                      tilePadding: const EdgeInsets.symmetric(
-                                          horizontal: 8),
-                                      title: Text(
-                                          bossNameForGender(boss, gender),
-                                          style: const TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w700)),
-                                      subtitle: Text('${rankFor(boss)} 重',
-                                          style: const TextStyle(
-                                              color: teal,
-                                              fontWeight: FontWeight.w700)),
-                                      children: boss.skills
-                                          .where((skill) =>
-                                              skillAppliesToGender(
-                                                  skill, gender))
-                                          .map((skill) => Padding(
-                                              padding:
-                                                  const EdgeInsets.fromLTRB(
-                                                      24, 4, 8, 4),
-                                              child: Row(children: [
-                                                Expanded(
-                                                    child: Text(
-                                                        skillNameForGender(
-                                                            skill, gender),
-                                                        style: const TextStyle(
-                                                            fontSize: 12))),
-                                                _FilterDropdown<int>(
-                                                    value: levelFor(skill),
-                                                    values: List.generate(10,
-                                                        (index) => 10 - index),
-                                                    itemLabel: (value) =>
-                                                        '$value 重',
-                                                    width: 104,
-                                                    onChanged: (value) {
-                                                      if (value == null) return;
-                                                      setState(() => overrides[
-                                                          skill.name] = value);
-                                                    })
-                                              ])))
-                                          .toList()))
-                                  .toList()))
+                          child: LayoutBuilder(
+                              builder: (context, constraints) =>
+                                  SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      child: SizedBox(
+                                          width: math.max(
+                                              560, constraints.maxWidth),
+                                          height: constraints.maxHeight,
+                                          child: ListView(children: [
+                                            Container(
+                                                height: 40,
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 14),
+                                                color: const Color(0xfff7f9f8),
+                                                child: Row(children: [
+                                                  const Expanded(
+                                                      flex: 4,
+                                                      child: Text('首领 / 技能',
+                                                          style: TextStyle(
+                                                              color: muted,
+                                                              fontSize: 11,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w700))),
+                                                  Expanded(
+                                                      flex: 2,
+                                                      child: InkWell(
+                                                          onTap: () => setState(() =>
+                                                              strategyDescending =
+                                                                  !(strategyDescending ??
+                                                                      false)),
+                                                          child: Row(
+                                                              mainAxisAlignment:
+                                                                  MainAxisAlignment
+                                                                      .center,
+                                                              children: [
+                                                                const Text(
+                                                                    '攻略进度',
+                                                                    style: TextStyle(
+                                                                        color:
+                                                                            muted,
+                                                                        fontSize:
+                                                                            11,
+                                                                        fontWeight:
+                                                                            FontWeight.w700)),
+                                                                const SizedBox(
+                                                                    width: 2),
+                                                                Icon(
+                                                                    strategyDescending ==
+                                                                            null
+                                                                        ? Icons
+                                                                            .unfold_more
+                                                                        : strategyDescending!
+                                                                            ? Icons
+                                                                                .arrow_downward
+                                                                            : Icons
+                                                                                .arrow_upward,
+                                                                    size: 13,
+                                                                    color:
+                                                                        muted)
+                                                              ]))),
+                                                  const Expanded(
+                                                      flex: 2,
+                                                      child: Text('收集进度',
+                                                          textAlign:
+                                                              TextAlign.center,
+                                                          style: TextStyle(
+                                                              color: muted,
+                                                              fontSize: 11,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w700))),
+                                                  const Expanded(
+                                                      flex: 2,
+                                                      child: Text('精神',
+                                                          textAlign:
+                                                              TextAlign.right,
+                                                          style: TextStyle(
+                                                              color: muted,
+                                                              fontSize: 11,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w700))),
+                                                  const Expanded(
+                                                      flex: 2,
+                                                      child: Text('耐力',
+                                                          textAlign:
+                                                              TextAlign.right,
+                                                          style: TextStyle(
+                                                              color: muted,
+                                                              fontSize: 11,
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w700)))
+                                                ])),
+                                            for (final boss in bosses) ...[
+                                              Builder(builder: (context) {
+                                                final progress =
+                                                    progressFor(boss);
+                                                final multiplier = multipliers[
+                                                    progress.completedRank];
+                                                return InkWell(
+                                                    onTap: () => setState(() {
+                                                          if (!expandedBossIds
+                                                              .add(boss.id)) {
+                                                            expandedBossIds
+                                                                .remove(
+                                                                    boss.id);
+                                                          }
+                                                        }),
+                                                    child: _AllSkillsTableRow(
+                                                        name: bossNameForGender(
+                                                            boss, gender),
+                                                        rank: progress
+                                                            .strategyRank,
+                                                        rankText: chineseRankLabel(
+                                                            progress
+                                                                .strategyRank),
+                                                        collection:
+                                                            '${progress.collectedSkills}/${progress.totalSkills}',
+                                                        spirit:
+                                                            '+${formatNumber(bossStatForGender(boss, gender, true) * multiplier)}',
+                                                        stamina:
+                                                            '+${formatNumber(bossStatForGender(boss, gender, false) * multiplier)}',
+                                                        bossRow: true,
+                                                        expanded:
+                                                            expandedBossIds
+                                                                .contains(
+                                                                    boss.id)));
+                                              }),
+                                              if (expandedBossIds
+                                                  .contains(boss.id))
+                                                for (final skill in boss.skills
+                                                    .where((skill) =>
+                                                        skillAppliesToGender(
+                                                            skill, gender)))
+                                                  _DraftPreviewSkillRow(
+                                                      skill: skill,
+                                                      gender: gender,
+                                                      value: levelFor(skill),
+                                                      onChanged: (value) =>
+                                                          setState(() =>
+                                                              overrides[skill
+                                                                      .name] =
+                                                                  value))
+                                            ]
+                                          ])))))
                     ])),
                 actions: [
                   FilledButton(
@@ -5637,6 +5759,49 @@ Future<void> showCharacterDraftPreview(BuildContext context, SkillStore store,
                       child: const Text('关闭预览'))
                 ]);
           }));
+}
+
+class _DraftPreviewSkillRow extends StatelessWidget {
+  const _DraftPreviewSkillRow(
+      {required this.skill,
+      required this.gender,
+      required this.value,
+      required this.onChanged});
+
+  final Skill skill;
+  final String gender;
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Container(
+      constraints: const BoxConstraints(minHeight: 46),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+      decoration:
+          const BoxDecoration(border: Border(top: BorderSide(color: line))),
+      child: Row(children: [
+        Expanded(
+            flex: 4,
+            child: Padding(
+                padding: const EdgeInsets.only(left: 20),
+                child: Text(skillNameForGender(skill, gender),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: skill.tradable ? purple : ink, fontSize: 12)))),
+        Expanded(
+            flex: 2,
+            child: Center(
+                child: _FilterDropdown<int>(
+                    value: value,
+                    values: List.generate(10, (index) => 10 - index),
+                    itemLabel: (rank) => '$rank 重',
+                    width: 82,
+                    onChanged: (rank) {
+                      if (rank != null) onChanged(rank);
+                    }))),
+        const Expanded(flex: 6, child: SizedBox())
+      ]));
 }
 
 Future<void> showDeleteCharacterDialog(
