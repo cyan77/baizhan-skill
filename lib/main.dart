@@ -417,6 +417,7 @@ class SkillStore extends ChangeNotifier {
   final List<String> importantSkills = [];
   final List<String> purpleSkills = [];
   int maxSkillRank = 10;
+  BossStatRules statRules = BossStatRules.defaults();
   String selectedCharacterId = '';
   int page = 0;
   List<String> navigationOrder = [...defaultNavigationOrder];
@@ -677,6 +678,7 @@ class SkillStore extends ChangeNotifier {
       ..clear()
       ..addAll(importedBosses);
     maxSkillRank = catalog.maxSkillRank;
+    statRules = catalog.rules.copy()..ensureThrough(maxSkillRank);
     purpleSkills
       ..clear()
       ..addAll(bosses
@@ -767,6 +769,8 @@ class SkillStore extends ChangeNotifier {
 
   void _restore(Map<String, dynamic> data) {
     maxSkillRank = ((data['maxSkillRank'] as num?)?.toInt() ?? 10).clamp(1, 99);
+    statRules = BossStatRules.fromJson(data['rules'],
+        maxSkillRank: maxSkillRank, defaultEditableFromRank: maxSkillRank + 1);
     characters.addAll((data['characters'] as List).map((item) =>
         CharacterData.fromJson(Map<String, dynamic>.from(item as Map))));
     bosses.addAll((data['bosses'] as List)
@@ -843,6 +847,7 @@ class SkillStore extends ChangeNotifier {
         'importantSkills': importantSkills,
         'purpleSkills': purpleSkills,
         'maxSkillRank': maxSkillRank,
+        'rules': statRules.toJson(),
         'selectedCharacterId': selectedCharacterId,
         'page': page,
         'navigationOrder': navigationOrder,
@@ -1181,7 +1186,35 @@ class SkillStore extends ChangeNotifier {
   void setMaxSkillRank(int value) {
     final normalized = value.clamp(1, 99).toInt();
     if (normalized == maxSkillRank) return;
+    final previous = maxSkillRank;
     maxSkillRank = normalized;
+    statRules.ensureThrough(maxSkillRank);
+    if (normalized > previous) {
+      statRules.editableFromRank = previous + 1;
+    }
+    for (final character in characters) {
+      character.levels
+          .updateAll((_, level) => level.clamp(0, maxSkillRank).toInt());
+    }
+    _save();
+    notifyListeners();
+  }
+
+  void applyMaxSkillRankSettings({
+    required int value,
+    required Map<int, double> rankMultipliers,
+    required Map<int, double> threeSkillBonuses,
+  }) {
+    final normalized = value.clamp(1, 99).toInt();
+    final previous = maxSkillRank;
+    maxSkillRank = normalized;
+    statRules
+      ..rankMultipliers.addAll(rankMultipliers)
+      ..threeSkillBonuses.addAll(threeSkillBonuses)
+      ..ensureThrough(normalized);
+    if (normalized > previous) {
+      statRules.editableFromRank = previous + 1;
+    }
     for (final character in characters) {
       character.levels
           .updateAll((_, level) => level.clamp(0, maxSkillRank).toInt());
@@ -1194,6 +1227,23 @@ class SkillStore extends ChangeNotifier {
     final character = selectedCharacter;
     if (character == null) return;
     character.levels[skillId] = value.clamp(0, maxSkillRank).toInt();
+    _save();
+    notifyListeners();
+  }
+
+  void setLevelForSkillName(String characterId, String skillName, int value) {
+    final character = _findCharacter(characterId);
+    if (character == null) return;
+    final normalized = value.clamp(0, maxSkillRank).toInt();
+    var changed = false;
+    for (final boss in bosses) {
+      for (final skill in boss.skills) {
+        if (skill.name != skillName) continue;
+        character.levels[skill.id] = normalized;
+        changed = true;
+      }
+    }
+    if (!changed) return;
     _save();
     notifyListeners();
   }
@@ -1236,9 +1286,9 @@ class SkillStore extends ChangeNotifier {
   }
 
   double _multiplier(int rank) {
-    const values = [0, 1, 2, 3, 4, 5, 7, 10, 15, 22.5, 33.75];
-    if (rank < values.length) return values[rank].toDouble();
-    return (values.last * math.pow(1.5, rank - 10)).toDouble();
+    if (rank <= 0) return 0;
+    statRules.ensureThrough(rank);
+    return statRules.rankMultipliers[rank] ?? 0;
   }
 
   double stat(String characterId, bool spirit) {
@@ -1262,22 +1312,11 @@ class SkillStore extends ChangeNotifier {
         .expand((boss) => boss.skills)
         .where((skill) => skillAppliesToGender(skill, character.gender))
         .map((skill) => character.levels[skill.id] ?? 0);
-    const bonus = [
-      0,
-      100,
-      200,
-      300,
-      400,
-      2000,
-      6000,
-      8000,
-      10000,
-      12000,
-      14000
-    ];
-    return List<int>.generate(math.min(maxSkillRank, 10), (index) => index + 1)
+    statRules.ensureThrough(maxSkillRank);
+    return List<int>.generate(maxSkillRank, (index) => index + 1)
         .where((value) => values.where((level) => level >= value).length > 2)
-        .fold<double>(0, (sum, value) => sum + bonus[value]);
+        .fold<double>(
+            0, (sum, value) => sum + (statRules.threeSkillBonuses[value] ?? 0));
   }
 
   int skillLevelForName(String characterId, String name) {
@@ -1503,6 +1542,7 @@ class SkillStore extends ChangeNotifier {
       'updatedAt': DateTime.now().toUtc().toIso8601String(),
       'notes': '首领技能数据更新',
       'maxSkillRank': maxSkillRank,
+      'rules': statRules.toJson(),
       'bosses': bosses.map((boss) => boss.toJson()).toList()
     };
     final bytes = Uint8List.fromList(utf8.encode(jsonEncode(data)));
@@ -1526,9 +1566,22 @@ class SkillStore extends ChangeNotifier {
       throw const FormatException('文件中没有首领数据');
     }
 
-    final importedMaxRank = (data['maxSkillRank'] as num?)?.toInt();
     final previousMaxRank = maxSkillRank;
-    if (importedMaxRank != null) setMaxSkillRank(importedMaxRank);
+    final importedMaxRank = (data['maxSkillRank'] as num?)?.toInt();
+    if (importedMaxRank != null) {
+      maxSkillRank = importedMaxRank.clamp(1, 99).toInt();
+      statRules = BossStatRules.fromJson(data['rules'],
+          maxSkillRank: maxSkillRank,
+          defaultEditableFromRank: maxSkillRank + 1);
+      for (final character in characters) {
+        character.levels
+            .updateAll((_, level) => level.clamp(0, maxSkillRank).toInt());
+      }
+    } else if (data['rules'] != null) {
+      statRules = BossStatRules.fromJson(data['rules'],
+          maxSkillRank: maxSkillRank,
+          defaultEditableFromRank: maxSkillRank + 1);
+    }
     var bossesAdded = 0;
     var skillsAdded = 0;
     final importStamp = DateTime.now().microsecondsSinceEpoch;
@@ -1604,7 +1657,10 @@ class SkillStore extends ChangeNotifier {
       }
     }
 
-    if (bossesAdded > 0 || skillsAdded > 0 || previousMaxRank != maxSkillRank) {
+    if (bossesAdded > 0 ||
+        skillsAdded > 0 ||
+        previousMaxRank != maxSkillRank ||
+        data['rules'] != null) {
       _save();
       notifyListeners();
     }
@@ -3411,7 +3467,7 @@ class CharacterManagementPage extends StatelessWidget {
               label: const Text('添加角色'))
         ]),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('按角色管理独立的技能重数记录，双击角色可编辑；打叉后不会出现在其他页面。',
+          const Text('按角色管理独立的技能重数记录，长按卡片可拖动排序，点击编辑图标进入编辑；打叉后不会出现在其他页面。',
               style: TextStyle(color: muted, fontSize: 12)),
           const SizedBox(height: 18),
           if (store.characters.isEmpty)
@@ -3471,23 +3527,20 @@ class CharacterManagementPage extends StatelessWidget {
                                                 color: ink,
                                                 fontWeight: FontWeight.w700)))
                                   ]))),
-                          child: InkWell(
-                              onDoubleTap: () => showCharacterDialog(
-                                  context, store, character: character),
-                              borderRadius: BorderRadius.circular(10),
-                              child: Container(
-                                  padding: const EdgeInsets.all(18),
-                                  decoration: BoxDecoration(
+                          child: Container(
+                              padding: const EdgeInsets.all(18),
+                              decoration: BoxDecoration(
+                                  color: character.archived
+                                      ? const Color(0xfff4f7f5)
+                                      : Colors.white,
+                                  border: Border.all(
                                       color: character.archived
-                                          ? const Color(0xfff4f7f5)
-                                          : Colors.white,
-                                      border: Border.all(
-                                          color: character.archived
-                                              ? const Color(0xffd5dfda)
-                                              : line),
-                                      borderRadius: BorderRadius.circular(10)),
-                                  child:
-                                      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                          ? const Color(0xffd5dfda)
+                                          : line),
+                                  borderRadius: BorderRadius.circular(10)),
+                              child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
                                     Row(children: [
                                       const Tooltip(
                                           message: '长按角色卡片拖动调整顺序',
@@ -3597,7 +3650,7 @@ class CharacterManagementPage extends StatelessWidget {
                                               fontSize: 13,
                                               fontWeight: FontWeight.w700))
                                     ])
-                                  ])))));
+                                  ]))));
                 })
         ]));
   }
@@ -3940,10 +3993,12 @@ class SkillMatrix extends StatefulWidget {
 
 class _SkillMatrixState extends State<SkillMatrix> {
   final horizontalController = ScrollController();
+  final verticalController = ScrollController();
 
   @override
   void dispose() {
     horizontalController.dispose();
+    verticalController.dispose();
     super.dispose();
   }
 
@@ -3964,6 +4019,9 @@ class _SkillMatrixState extends State<SkillMatrix> {
           visibleCharacterWidth, characters.length * characterColumnWidth);
       final headerHeight = constraints.maxWidth < 600 ? 42.0 : 46.0;
       final rowHeight = constraints.maxWidth < 600 ? 46.0 : 50.0;
+      final matrixHeight = math.min(
+          560.0, math.max(280.0, MediaQuery.sizeOf(context).height * 0.62));
+      final skillContentHeight = widget.skillNames.length * rowHeight;
 
       String displaySkillLabel(String name) {
         final skill = store.findSkill(name);
@@ -4013,40 +4071,102 @@ class _SkillMatrixState extends State<SkillMatrix> {
               style: const TextStyle(
                   color: muted, fontSize: 12, fontWeight: FontWeight.w700)));
 
-      return CardShell(
-          padding: EdgeInsets.zero,
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Column(children: [
-              skillCell('技能名称', header: true),
-              ...widget.skillNames.map(
+      final headerCharacters =
+          Row(children: characters.map(characterHeader).toList());
+      final skillRows = Column(
+          children: widget.skillNames
+              .map(
                   (name) => skillCell(displaySkillLabel(name), skillName: name))
-            ]),
-            Expanded(
-                child: Scrollbar(
-                    controller: horizontalController,
-                    thumbVisibility: true,
-                    child: SingleChildScrollView(
-                        controller: horizontalController,
-                        scrollDirection: Axis.horizontal,
-                        child: SizedBox(
-                            width: characterTableWidth,
-                            child: Column(children: [
-                              Row(
-                                  children:
-                                      characters.map(characterHeader).toList()),
-                              ...widget.skillNames.map((skillName) => Row(
-                                  children: characters
-                                      .map((character) => _SkillMatrixCell(
-                                          width: characterColumnWidth,
-                                          height: rowHeight,
-                                          alignment: Alignment.center,
+              .toList());
+      final characterRows = Column(
+          children: widget.skillNames
+              .map((skillName) => Row(
+                  children: characters
+                      .map((character) => _SkillMatrixCell(
+                          width: characterColumnWidth,
+                          height: rowHeight,
+                          alignment: Alignment.center,
+                          child: SizedBox.expand(
+                              child: Tooltip(
+                                  message: '点击修改重数',
+                                  child: InkWell(
+                                      onTap: () => showSkillRankDialog(
+                                          context, store, character, skillName,
+                                          displayName:
+                                              displaySkillLabel(skillName)),
+                                      child: Center(
                                           child: RankBadge(
                                               rank: store.skillLevelForName(
                                                   character.id, skillName),
-                                              plain: true)))
-                                      .toList()))
-                            ])))))
-          ]));
+                                              plain: true)))))))
+                      .toList()))
+              .toList());
+
+      return CardShell(
+          padding: EdgeInsets.zero,
+          child: SizedBox(
+              height: matrixHeight,
+              child: Column(children: [
+                // Keep the column titles visible while the skill rows scroll.
+                Row(children: [
+                  skillCell('技能名称', header: true),
+                  Expanded(
+                      child: ClipRect(
+                          child: AnimatedBuilder(
+                              animation: horizontalController,
+                              builder: (context, child) => Transform.translate(
+                                  offset: Offset(
+                                      -(horizontalController.hasClients
+                                          ? horizontalController.offset
+                                          : 0.0),
+                                      0),
+                                  child: child),
+                              child: SizedBox(
+                                  width: characterTableWidth,
+                                  child: headerCharacters))))
+                ]),
+                Expanded(
+                    child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                      SizedBox(
+                          width: skillColumnWidth,
+                          child: ClipRect(
+                              child: AnimatedBuilder(
+                                  animation: verticalController,
+                                  builder: (context, child) =>
+                                      Transform.translate(
+                                          offset: Offset(
+                                              0,
+                                              -(verticalController.hasClients
+                                                  ? verticalController.offset
+                                                  : 0.0)),
+                                          child: child),
+                                  child: SizedBox(
+                                      height: skillContentHeight,
+                                      child: skillRows)))),
+                      Expanded(
+                          child: Scrollbar(
+                              controller: verticalController,
+                              thumbVisibility: true,
+                              notificationPredicate: (notification) =>
+                                  notification.metrics.axis == Axis.vertical,
+                              child: Scrollbar(
+                                  controller: horizontalController,
+                                  thumbVisibility: true,
+                                  notificationPredicate: (notification) =>
+                                      notification.metrics.axis ==
+                                      Axis.horizontal,
+                                  child: SingleChildScrollView(
+                                      controller: horizontalController,
+                                      scrollDirection: Axis.horizontal,
+                                      child: SizedBox(
+                                          width: characterTableWidth,
+                                          child: SingleChildScrollView(
+                                              controller: verticalController,
+                                              child: characterRows))))))
+                    ]))
+              ])));
     });
   }
 }
@@ -4224,7 +4344,7 @@ class ImportantPage extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Padding(
             padding: EdgeInsets.only(bottom: 14),
-            child: Text('重数随每个角色的技能页同步，仅用于查看，不在这里编辑。',
+            child: Text('点击重数即可修改，修改会同步到对应角色的技能记录。',
                 style: TextStyle(color: muted, fontSize: 12))),
         SkillSummaryFilters(
             store: store,
@@ -4260,7 +4380,7 @@ class PurplePage extends StatelessWidget {
                 const Icon(Icons.auto_awesome, color: purple),
                 const SizedBox(width: 10),
                 const Expanded(
-                    child: Text('可交易技能以紫色标识，重数按角色技能页同步展示。',
+                    child: Text('可交易技能以紫色标识，点击重数即可修改并同步角色记录。',
                         style: TextStyle(color: muted, fontSize: 12))),
                 Text(
                     highest == 0 ? '暂无已学习' : '$highestCount 个达到最高 ${highest} 重',
@@ -4832,10 +4952,17 @@ class BossPage extends StatelessWidget {
       ]));
 
   Future<void> _setMaxRank(BuildContext context) async {
-    final value = await showDialog<int>(
+    final value = await showDialog<MaxSkillRankSettings>(
         context: context,
-        builder: (_) => _MaxSkillRankDialog(initialValue: store.maxSkillRank));
-    if (value != null) store.setMaxSkillRank(value);
+        builder: (_) => _MaxSkillRankDialog(
+            initialValue: store.maxSkillRank,
+            initialRules: store.statRules,
+            initialEditableFrom: store.statRules.editableFromRank));
+    if (value == null) return;
+    store.applyMaxSkillRankSettings(
+        value: value.maxSkillRank,
+        rankMultipliers: value.rankMultipliers,
+        threeSkillBonuses: value.threeSkillBonuses);
   }
 
   Future<void> _exportBosses(BuildContext context) async {
@@ -4872,9 +4999,27 @@ class BossPage extends StatelessWidget {
   }
 }
 
+class MaxSkillRankSettings {
+  const MaxSkillRankSettings({
+    required this.maxSkillRank,
+    required this.rankMultipliers,
+    required this.threeSkillBonuses,
+  });
+
+  final int maxSkillRank;
+  final Map<int, double> rankMultipliers;
+  final Map<int, double> threeSkillBonuses;
+}
+
 class _MaxSkillRankDialog extends StatefulWidget {
-  const _MaxSkillRankDialog({required this.initialValue});
+  const _MaxSkillRankDialog({
+    required this.initialValue,
+    required this.initialRules,
+    required this.initialEditableFrom,
+  });
   final int initialValue;
+  final BossStatRules initialRules;
+  final int initialEditableFrom;
 
   @override
   State<_MaxSkillRankDialog> createState() => _MaxSkillRankDialogState();
@@ -4882,11 +5027,18 @@ class _MaxSkillRankDialog extends StatefulWidget {
 
 class _MaxSkillRankDialogState extends State<_MaxSkillRankDialog> {
   late final TextEditingController controller;
+  late int previewMaxRank;
+  late final Map<int, double> rankMultipliers;
+  late final Map<int, double> threeSkillBonuses;
 
   @override
   void initState() {
     super.initState();
     controller = TextEditingController(text: '${widget.initialValue}');
+    previewMaxRank = widget.initialValue;
+    rankMultipliers = {...widget.initialRules.rankMultipliers};
+    threeSkillBonuses = {...widget.initialRules.threeSkillBonuses};
+    _ensureDraftThrough(previewMaxRank);
   }
 
   @override
@@ -4895,16 +5047,131 @@ class _MaxSkillRankDialogState extends State<_MaxSkillRankDialog> {
     super.dispose();
   }
 
+  void _ensureDraftThrough(int maxRank) {
+    for (var rank = 1; rank <= maxRank; rank++) {
+      rankMultipliers.putIfAbsent(
+          rank, () => (rankMultipliers[rank - 1] ?? 1) * 1.5);
+      threeSkillBonuses.putIfAbsent(rank, () => 0);
+    }
+  }
+
+  int get editableFrom => previewMaxRank > widget.initialValue
+      ? widget.initialValue + 1
+      : widget.initialEditableFrom;
+
+  String _formatNumber(double value) =>
+      value == value.roundToDouble() ? '${value.toInt()}' : '$value';
+
+  Widget _ruleValue({
+    required int rank,
+    required double value,
+    required bool enabled,
+    required String label,
+    required ValueChanged<String> onChanged,
+  }) {
+    if (!enabled) {
+      return Expanded(
+          child: InputDecorator(
+              decoration: InputDecoration(labelText: label),
+              child: Text(_formatNumber(value),
+                  style: const TextStyle(color: muted))));
+    }
+    return Expanded(
+        child: TextFormField(
+            initialValue: _formatNumber(value),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))
+            ],
+            decoration: InputDecoration(labelText: label),
+            onChanged: onChanged));
+  }
+
   @override
   Widget build(BuildContext context) => AlertDialog(
           title: const Text('设置技能最高重'),
-          content: TextField(
-              controller: controller,
-              autofocus: true,
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: const InputDecoration(
-                  labelText: '最高重', helperText: '将影响全部重数筛选、统计和显示')),
+          content: SizedBox(
+              width: 620,
+              child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 620),
+                  child: SingleChildScrollView(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                        TextField(
+                            controller: controller,
+                            autofocus: true,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly
+                            ],
+                            decoration: const InputDecoration(
+                                labelText: '最高重',
+                                helperText: '将影响全部重数筛选、统计和显示'),
+                            onChanged: (text) {
+                              final value = int.tryParse(text);
+                              if (value == null || value < 1 || value > 99) {
+                                return;
+                              }
+                              setState(() {
+                                previewMaxRank = value;
+                                _ensureDraftThrough(value);
+                              });
+                            }),
+                        const SizedBox(height: 16),
+                        Text(
+                            previewMaxRank >= editableFrom
+                                ? '规则：1-${previewMaxRank} 重；${editableFrom}-${previewMaxRank} 重可编辑，之前规则锁定'
+                                : '规则：1-${previewMaxRank} 重；当前规则已锁定，提高最高重后可编辑新增重数',
+                            style: const TextStyle(color: muted, fontSize: 12)),
+                        const SizedBox(height: 10),
+                        Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                                color: const Color(0xfff7faf8),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: line)),
+                            child: Column(children: [
+                              for (var rank = 1;
+                                  rank <= previewMaxRank;
+                                  rank++) ...[
+                                Row(children: [
+                                  SizedBox(
+                                      width: 56,
+                                      child: Text('$rank 重',
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                              color: ink))),
+                                  _ruleValue(
+                                      rank: rank,
+                                      value: rankMultipliers[rank] ?? 0,
+                                      enabled: rank >= editableFrom,
+                                      label: '首领倍率',
+                                      onChanged: (text) {
+                                        final value = double.tryParse(text);
+                                        if (value != null && value >= 0) {
+                                          rankMultipliers[rank] = value;
+                                        }
+                                      }),
+                                  const SizedBox(width: 10),
+                                  _ruleValue(
+                                      rank: rank,
+                                      value: threeSkillBonuses[rank] ?? 0,
+                                      enabled: rank >= editableFrom,
+                                      label: '3本额外精耐',
+                                      onChanged: (text) {
+                                        final value = double.tryParse(text);
+                                        if (value != null && value >= 0) {
+                                          threeSkillBonuses[rank] = value;
+                                        }
+                                      })
+                                ]),
+                                if (rank < previewMaxRank)
+                                  const Divider(height: 12)
+                              ]
+                            ]))
+                      ])))),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(context),
@@ -4912,7 +5179,14 @@ class _MaxSkillRankDialogState extends State<_MaxSkillRankDialog> {
             FilledButton(
                 onPressed: () {
                   final rank = int.tryParse(controller.text);
-                  if (rank != null && rank > 0) Navigator.pop(context, rank);
+                  if (rank != null && rank > 0 && rank <= 99) {
+                    Navigator.pop(
+                        context,
+                        MaxSkillRankSettings(
+                            maxSkillRank: rank,
+                            rankMultipliers: {...rankMultipliers},
+                            threeSkillBonuses: {...threeSkillBonuses}));
+                  }
                 },
                 child: const Text('保存'))
           ]);
@@ -5896,6 +6170,44 @@ String formatNumber(num value) => value
     .round()
     .toString()
     .replaceAllMapped(RegExp(r'(?<=\d)(?=(\d{3})+$)'), (match) => ',');
+
+Future<void> showSkillRankDialog(BuildContext context, SkillStore store,
+    CharacterData character, String skillName,
+    {required String displayName}) async {
+  var selectedLevel = store.skillLevelForName(character.id, skillName);
+  await showDialog<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+                  title: Text(displayName),
+                  content: Row(children: [
+                    const Text('当前重数'),
+                    const Spacer(),
+                    _FilterDropdown<int>(
+                        value: selectedLevel,
+                        values: [
+                          ...List.generate(store.maxSkillRank,
+                              (index) => store.maxSkillRank - index),
+                          0
+                        ],
+                        itemLabel: (value) => value == 0 ? '未学习' : '$value 重',
+                        width: 112,
+                        onChanged: (value) => setState(
+                            () => selectedLevel = value ?? selectedLevel))
+                  ]),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('取消')),
+                    FilledButton(
+                        onPressed: () {
+                          store.setLevelForSkillName(
+                              character.id, skillName, selectedLevel);
+                          Navigator.pop(context);
+                        },
+                        child: const Text('保存'))
+                  ])));
+}
 
 Future<void> showSkillDialog(
     BuildContext context, SkillStore store, Skill skill,

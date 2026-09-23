@@ -56,7 +56,7 @@ void main() {
     });
 
     final store = SkillStore(
-        bossCatalogService: _FakeBossCatalogService(const RemoteBossCatalog(
+        bossCatalogService: _FakeBossCatalogService(RemoteBossCatalog(
             version: 1, updatedAt: '', notes: '', bosses: [])));
     await store.load();
 
@@ -100,6 +100,33 @@ void main() {
     expect(progress.collectedSkills, 2);
     expect(progress.totalSkills, 4);
     expect(chineseRankLabel(progress.strategyRank), '九重');
+  });
+
+  test('summary skill rank edits sync all matching skill records', () {
+    final store = SkillStore();
+    store.bosses.add(Boss(
+        id: 'summary-boss',
+        name: '汇总首领',
+        spirit: 400,
+        stamina: 400,
+        skills: [
+          Skill(id: 'summary-skill-1', name: '汇总技能'),
+          Skill(id: 'summary-skill-2', name: '汇总技能')
+        ]));
+    store.characters.add(CharacterData(
+        id: 'summary-character',
+        name: '汇总角色',
+        gender: '女性',
+        school: '未设置',
+        mind: '未设置',
+        position: '输出',
+        levels: const {}));
+
+    store.setLevelForSkillName('summary-character', '汇总技能', 7);
+
+    expect(store.level('summary-character', 'summary-skill-1'), 7);
+    expect(store.level('summary-character', 'summary-skill-2'), 7);
+    expect(store.skillLevelForName('summary-character', '汇总技能'), 7);
   });
 
   testWidgets('all skills strategy header toggles Boss ordering',
@@ -404,7 +431,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('character cards open the editor from double tap',
+  testWidgets('character cards do not open the editor from double tap',
       (tester) async {
     final store = SkillStore();
     store.characters.add(CharacterData(
@@ -424,7 +451,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.tap(find.text('卡片角色'));
     await tester.pumpAndSettle();
-    expect(find.text('编辑角色'), findsOneWidget);
+    expect(find.text('编辑角色'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -628,6 +655,48 @@ void main() {
 
     expect(store.bookNeeds(character.id),
         {'通本1': 20, '通本2': 4, '通本3': 5, '通本4': 6});
+  });
+
+  test('skill rank rules unlock only the newly added rank range', () {
+    final store = SkillStore();
+
+    expect(store.statRules.editableFromRank, 11);
+    expect(store.statRules.rankMultipliers[10], 33.75);
+    expect(store.statRules.threeSkillBonuses[7], 8000);
+
+    store.setMaxSkillRank(12);
+    expect(store.statRules.editableFromRank, 11);
+    expect(store.statRules.rankMultipliers.containsKey(11), isTrue);
+    expect(store.statRules.rankMultipliers.containsKey(12), isTrue);
+
+    store.applyMaxSkillRankSettings(
+        value: 12,
+        rankMultipliers: const {11: 41.5, 12: 52.5},
+        threeSkillBonuses: const {11: 16000, 12: 18000});
+    expect(store.statRules.rankMultipliers[11], 41.5);
+    expect(store.statRules.threeSkillBonuses[12], 18000);
+
+    store.setMaxSkillRank(13);
+    expect(store.statRules.editableFromRank, 13);
+    expect(store.statRules.rankMultipliers[11], 41.5);
+  });
+
+  test('remote Boss catalogs carry spirit and stamina rules', () {
+    final catalog = RemoteBossCatalog.fromJson({
+      'type': 'baizhan-bosses',
+      'version': 5,
+      'maxSkillRank': 11,
+      'rules': {
+        'rankMultipliers': {'11': 48.5},
+        'threeSkillBonuses': {'11': 16000},
+        'editableFromRank': 11
+      },
+      'bosses': []
+    });
+
+    expect(catalog.rules.rankMultipliers[11], 48.5);
+    expect(catalog.rules.threeSkillBonuses[11], 16000);
+    expect(catalog.rules.editableFromRank, 11);
   });
 
   test('imported skill ranks override the selected default rank', () {
@@ -863,7 +932,7 @@ void main() {
         mind: '未设置',
         position: 'dps',
         levels: const {'skill-a': 8}));
-    store.availableBossCatalog = const RemoteBossCatalog(
+    store.availableBossCatalog = RemoteBossCatalog(
         version: 2,
         updatedAt: '2026-09-21',
         notes: '测试更新',
@@ -892,7 +961,7 @@ void main() {
 
   test('skipping a Boss catalog version suppresses automatic prompts',
       () async {
-    final catalog = const RemoteBossCatalog(
+    final catalog = RemoteBossCatalog(
         version: 2, updatedAt: '2026-09-21', notes: '测试更新', bosses: []);
     final service = _FakeBossCatalogService(catalog);
     final store = SkillStore(bossCatalogService: service)
