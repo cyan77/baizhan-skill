@@ -102,7 +102,7 @@ jobs:
 
       - name: Package macOS installer
         run: |
-          app_path="build/macos/Build/Products/Release/baizhan-skill.app"
+          app_path="build/macos/Build/Products/Release/百战异闻录助手.app"
           test -d "$app_path"
           pkgbuild --component "$app_path" --install-location /Applications --identifier lynn.game.jx3.baizhan --version "$APP_VERSION" "BaizhanSkill-macOS-Setup.pkg"
 
