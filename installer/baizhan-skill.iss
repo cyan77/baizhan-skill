@@ -1,5 +1,5 @@
 ; UTF-8
-#define MyAppName "百战技能"
+#define MyAppName "百战异闻录助手"
 #define MyAppPublisher "lynn.game.jx3"
 #define MyAppExeName "baizhan_skill.exe"
 

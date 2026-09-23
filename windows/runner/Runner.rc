@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "lynn.game.jx3" "\0"
-            VALUE "FileDescription", "baizhan-skill" "\0"
+            VALUE "FileDescription", "百战异闻录助手" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "baizhan_skill" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 lynn.game.jx3. All rights reserved." "\0"
             VALUE "OriginalFilename", "baizhan_skill.exe" "\0"
-            VALUE "ProductName", "baizhan-skill" "\0"
+            VALUE "ProductName", "百战异闻录助手" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

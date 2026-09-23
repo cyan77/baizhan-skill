@@ -3,7 +3,7 @@
     <!-- WebDAV sync needs network access in release/profile builds too. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <application
-        android:label="百战异闻录"
+        android:label="百战异闻录助手"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

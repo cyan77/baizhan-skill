@@ -1,6 +1,6 @@
-# 百战异闻录 · 技能管理
+# 百战异闻录助手
 
-![百战异闻录](assets/icon/baizhan_icon.png)
+![百战异闻录助手](assets/icon/baizhan_icon.png)
 
 一款面向《剑网 3》百战异闻录的桌面端技能管理工具。它可以按角色记录技能重数，自动统计精神值、耐力值和通本需求，并把重要技能、可交易技能和首领技能集中到一个界面中维护。
 
@@ -264,4 +264,4 @@ installer/              Windows 安装包配置
 
 - [更新日志](CHANGELOG.md)
 - [全部 Releases](https://github.com/cyan77/baizhan-skill/releases)
-- 当前版本：`v0.1.11`
+- 当前版本：`v0.1.12`

@@ -585,7 +585,11 @@ class SkillStore extends ChangeNotifier {
     if (Platform.isMacOS) {
       final appPath =
           File(Platform.resolvedExecutable).parent.parent.parent.path;
-      await Process.start('open', [appPath], mode: ProcessStartMode.detached);
+      // Without -n, macOS may only activate the existing process instead of
+      // launching a new one. The pending migration would then remain in the
+      // current in-memory store and continue to appear as "待重启".
+      await Process.start('open', ['-n', appPath],
+          mode: ProcessStartMode.detached);
     } else {
       await Process.start(
           Platform.resolvedExecutable, Platform.executableArguments,
@@ -1755,7 +1759,7 @@ class BattleSkillsApp extends StatelessWidget {
       animation: store,
       builder: (context, child) => MaterialApp(
           debugShowCheckedModeBanner: false,
-          title: '百战异闻录 · 技能统计',
+          title: '百战异闻录助手',
           scrollBehavior: const _DesktopScrollBehavior(),
           themeMode: store.themeMode,
           theme: ThemeData(
@@ -1987,7 +1991,7 @@ class SideNav extends StatelessWidget {
               child: Row(children: [
                 Icon(Icons.auto_awesome, color: teal),
                 SizedBox(width: 10),
-                Text('百战异闻录',
+                Text('百战异闻录助手',
                     style: TextStyle(
                         color: ink, fontSize: 18, fontWeight: FontWeight.w700))
               ])),
@@ -2815,7 +2819,7 @@ class _HomePageState extends State<HomePage> {
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  const Text('百战异闻录技能统计',
+                  const Text('百战异闻录助手',
                       style: TextStyle(
                           color: ink,
                           fontSize: 18,
