@@ -1,3 +1,4 @@
+
 name: Release desktop clients
 
 on:
@@ -101,11 +102,11 @@ jobs:
 
       - name: Package macOS installer
         run: |
-          pkgbuild \
-            --component "build/macos/Build/Products/Release/baizhan-skill.app" \
-            --install-location /Applications \
-            --identifier lynn.game.jx3.baizhan \
-            --version "$APP_VERSION" \
+          pkgbuild \\
+            --component "build/macos/Build/Products/Release/baizhan-skill.app" \\
+            --install-location /Applications \\
+            --identifier lynn.game.jx3.baizhan \\
+            --version "$APP_VERSION" \\
             "BaizhanSkill-macOS-Setup.pkg"
 
       - name: Upload macOS workflow artifact
@@ -123,6 +124,9 @@ jobs:
       - build-macos
     runs-on: ubuntu-latest
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Download packaged clients
         uses: actions/download-artifact@v4
         with:
@@ -134,15 +138,20 @@ jobs:
         id: release-metadata
         shell: bash
         run: |
-          title=$(grep -m1 "^## ${GITHUB_REF_NAME} " CHANGELOG.md | sed 's/^## //' || true)
+          title=$(grep -m1 "^## $GITHUB_REF_NAME " CHANGELOG.md | sed 's/^## //' || true)
           if [ -z "$title" ]; then
             title="$GITHUB_REF_NAME"
           fi
           echo "title=$title" >> "$GITHUB_OUTPUT"
+          awk -v version="$GITHUB_REF_NAME" '
+            $0 ~ "^## " version " " { in_section=1; print; next }
+            in_section && $0 ~ /^## / { exit }
+            in_section { print }
+          ' CHANGELOG.md > release-notes.md
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ steps.release-metadata.outputs.title }}
+          body_path: release-notes.md
           files: release-assets/**/*
-          generate_release_notes: true
