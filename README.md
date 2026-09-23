@@ -264,4 +264,4 @@ installer/              Windows 安装包配置
 
 - [更新日志](CHANGELOG.md)
 - [全部 Releases](https://github.com/cyan77/baizhan-skill/releases)
-- 当前版本：`v0.1.16`
+- 当前版本：`v0.1.17`
