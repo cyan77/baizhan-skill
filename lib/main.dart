@@ -580,6 +580,20 @@ class SkillStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> restartForLocalDataMigration() async {
+    await _localWriteQueue;
+    if (Platform.isMacOS) {
+      final appPath =
+          File(Platform.resolvedExecutable).parent.parent.parent.path;
+      await Process.start('open', [appPath], mode: ProcessStartMode.detached);
+    } else {
+      await Process.start(
+          Platform.resolvedExecutable, Platform.executableArguments,
+          mode: ProcessStartMode.detached);
+    }
+    exit(0);
+  }
+
   Future<void> _initializeRemoteSync() async {
     final checked = await checkForNewerBackupWithRetry();
     if (checked && newerRemoteBackup == null) _scheduleChangeSync();
@@ -5003,22 +5017,19 @@ class SettingsPage extends StatelessWidget {
       final confirmed = await showDialog<bool>(
           context: context,
           builder: (dialogContext) => AlertDialog(
-                  title: const Text('修改本地数据位置'),
-                  content: Text('重启应用后会把当前数据迁移到：\n$selected'),
+                  title: const Text('重启并迁移本地数据'),
+                  content: Text('确认后应用会立即重启，并把当前数据迁移到：\n$selected'),
                   actions: [
                     TextButton(
                         onPressed: () => Navigator.pop(dialogContext, false),
                         child: const Text('取消')),
                     FilledButton(
                         onPressed: () => Navigator.pop(dialogContext, true),
-                        child: const Text('确认修改'))
+                        child: const Text('重启并迁移'))
                   ]));
       if (confirmed != true) return;
       await store.scheduleLocalDataMigration(selected);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('已记录新的本地数据位置，请重启应用完成迁移')));
-      }
+      await store.restartForLocalDataMigration();
     } catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context)
