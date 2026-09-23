@@ -1,6 +1,13 @@
 
 # 更新日志
 
+## v0.1.15 · Windows 安装目录修正
+
+### Windows 安装
+
+- Windows 安装版默认安装到 `C:\Program Files\BaizhanSkill`。
+- 安装器改为管理员权限运行，便于在系统 Program Files 目录完成安装、更新和卸载。
+
 ## v0.1.14 · 首领精耐规则可配置
 
 ### 首领设置与数据同步
