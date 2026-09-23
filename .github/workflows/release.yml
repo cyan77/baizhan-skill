@@ -134,8 +134,7 @@ jobs:
         id: release-metadata
         shell: bash
         run: |
-          heading=$(grep -m1 "^## ${GITHUB_REF_NAME} " CHANGELOG.md || true)
-          title="${heading#\#\# }"
+          title=$(grep -m1 "^## ${GITHUB_REF_NAME} " CHANGELOG.md | sed 's/^## //' || true)
           if [ -z "$title" ]; then
             title="$GITHUB_REF_NAME"
           fi
@@ -145,5 +144,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ steps.release-metadata.outputs.title }}
-          files: release-assets/*
+          files: release-assets/**/*
           generate_release_notes: true
