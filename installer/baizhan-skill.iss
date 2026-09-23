@@ -42,3 +42,18 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "启动 {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  MarkerFile: string;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    MarkerFile := ExpandConstant('{app}\.baizhanskill-installed');
+    SaveStringToFile(MarkerFile, 'installed', False);
+  end;
+end;
+
+[UninstallDelete]
+Type: files; Name: "{app}\.baizhanskill-installed"

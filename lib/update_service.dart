@@ -1,6 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
 
+const windowsPortableAssetName = 'BaizhanSkill-Windows-x64.zip';
+const windowsInstallerAssetName = 'BaizhanSkill-Windows-x64-Setup.exe';
+const macosInstallerAssetName = 'BaizhanSkill-macOS-Setup.pkg';
+const windowsInstallMarkerName = '.baizhanskill-installed';
+
 class AppRelease {
   const AppRelease({
     required this.version,
@@ -16,14 +21,42 @@ class AppRelease {
 
   Uri get platformDownloadUri {
     final candidates = Platform.isWindows
-        ? const ['BaizhanSkill-Windows-x64.zip']
-        : const <String>[];
+        ? [windowsUpdateAssetName(installed: isWindowsInstalledBuild())]
+        : Platform.isMacOS
+            ? const [macosInstallerAssetName]
+            : const <String>[];
     for (final name in candidates) {
       final uri = assets[name];
       if (uri != null) return uri;
     }
     return pageUri;
   }
+
+  String get platformDownloadLabel {
+    if (Platform.isWindows) {
+      return isWindowsInstalledBuild() ? '下载 Windows 安装版' : '下载 Windows 便携版';
+    }
+    if (Platform.isMacOS) return '下载 macOS 安装版';
+    return '打开发布页';
+  }
+}
+
+String windowsUpdateAssetName({required bool installed}) =>
+    installed ? windowsInstallerAssetName : windowsPortableAssetName;
+
+bool isWindowsInstalledBuild() {
+  if (!Platform.isWindows) return false;
+  final executable = File(Platform.resolvedExecutable);
+  final marker = File(
+      '${executable.parent.path}${Platform.pathSeparator}$windowsInstallMarkerName');
+  return marker.existsSync() ||
+      isWindowsInstalledExecutablePath(executable.path);
+}
+
+bool isWindowsInstalledExecutablePath(String executablePath) {
+  final normalized = executablePath.replaceAll('\\', '/').toLowerCase();
+  return normalized.contains('/program files/') ||
+      normalized.contains('/program files (x86)/');
 }
 
 class UpdateService {

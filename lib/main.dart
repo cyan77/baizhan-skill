@@ -5592,7 +5592,7 @@ class _UpdateSettingCardState extends State<_UpdateSettingCard> {
                   FilledButton.icon(
                       onPressed: () => Navigator.pop(dialogContext, true),
                       icon: const Icon(Icons.download_outlined, size: 18),
-                      label: const Text('下载更新'))
+                      label: Text(release.platformDownloadLabel))
                 ]));
     if (download != true) return;
     final opened = await launchUrl(release.platformDownloadUri,

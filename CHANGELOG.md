@@ -1,6 +1,15 @@
 
 # 更新日志
 
+## v0.1.16 · 更新包类型自动匹配
+
+### 更新与安装
+
+- Windows 安装版检查更新时只提供 `BaizhanSkill-Windows-x64-Setup.exe`。
+- Windows 便携版检查更新时只提供 `BaizhanSkill-Windows-x64.zip`。
+- macOS 检查更新时提供 `BaizhanSkill-macOS-Setup.pkg`。
+- 安装器写入安装标记，支持识别默认和自定义安装目录。
+
 ## v0.1.15 · 首领精耐规则与 Windows 安装修正
 
 ### 首领设置与数据同步

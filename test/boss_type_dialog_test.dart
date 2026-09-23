@@ -16,6 +16,21 @@ void main() {
     expect(isVersionNewer('0.1.2', '0.1.2+3'), isFalse);
   });
 
+  test('Windows update assets match the installed package type', () {
+    expect(windowsUpdateAssetName(installed: true),
+        'BaizhanSkill-Windows-x64-Setup.exe');
+    expect(windowsUpdateAssetName(installed: false),
+        'BaizhanSkill-Windows-x64.zip');
+    expect(
+        isWindowsInstalledExecutablePath(
+            r'C:\Program Files\BaizhanSkill\baizhan_skill.exe'),
+        isTrue);
+    expect(
+        isWindowsInstalledExecutablePath(
+            r'D:\Downloads\BaizhanSkill\baizhan_skill.exe'),
+        isFalse);
+  });
+
   test('navigation configuration supports visibility and ordering', () {
     final store = SkillStore();
     store.setNavigationConfiguration(
