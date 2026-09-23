@@ -1,6 +1,14 @@
 
 # 更新日志
 
+## v0.1.18 · Windows 安装目录自动回溯
+
+### Windows 安装
+
+- 修正安装器脚本，已安装过的版本会优先沿用历史安装目录。
+- 兼容旧版用户目录安装和新版 `C:\Program Files\BaizhanSkill` 安装。
+- 修正安装器编译配置，确保 Windows 安装包可以正常生成。
+
 ## v0.1.17 · Windows 安装目录记忆修正
 
 ### Windows 安装

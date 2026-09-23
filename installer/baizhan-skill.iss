@@ -9,7 +9,7 @@
 #endif
 
 [Setup]
-AppId={#MyAppId}
+AppId={{A5C0B6B2-8AF3-4B3B-9A4F-6A4D2D83E6B7}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
@@ -44,6 +44,9 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "启动 {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+Type: files; Name: "{app}\.baizhanskill-installed"
 
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -84,6 +87,3 @@ begin
   end;
   Result := ExpandConstant('{autopf}\BaizhanSkill');
 end;
-
-[UninstallDelete]
-Type: files; Name: "{app}\.baizhanskill-installed"

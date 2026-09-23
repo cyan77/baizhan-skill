@@ -2,7 +2,7 @@
 name: baizhan_skill
 description: JX3 百战异闻录助手。
 publish_to: "none"
-version: 0.1.17+18
+version: 0.1.18+19
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
