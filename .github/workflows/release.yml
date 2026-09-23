@@ -1,4 +1,4 @@
-name: Release Windows client
+name: Release desktop clients
 
 on:
   workflow_dispatch:
@@ -40,17 +40,110 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath BaizhanSkill-Windows-x64.zip
 
+      - name: Read application version
+        shell: pwsh
+        run: |
+          $version = ((Select-String -Path pubspec.yaml -Pattern '^version:\s*(.+)$').Matches.Groups[1].Value.Trim() -replace '\+.*$', '')
+          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          if (-not (Test-Path $iscc)) {
+            throw "Inno Setup compiler was not found"
+          }
+          & $iscc "/DMyAppVersion=$env:APP_VERSION" installer\baizhan-skill.iss
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup failed with exit code $LASTEXITCODE"
+          }
+
       - name: Upload Windows workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: BaizhanSkill-Windows-x64
-          path: BaizhanSkill-Windows-x64.zip
+          path: |
+            BaizhanSkill-Windows-x64.zip
+            installer/output/BaizhanSkill-Windows-x64-Setup.exe
           if-no-files-found: error
 
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.4"
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Build macOS client
+        run: flutter build macos --release
+
+      - name: Read application version
+        run: |
+          version=$(grep '^version:' pubspec.yaml | sed -E 's/^version:\s*([^+]+).*/\1/')
+          echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Package macOS installer
+        run: |
+          pkgbuild \
+            --component "build/macos/Build/Products/Release/baizhan-skill.app" \
+            --install-location /Applications \
+            --identifier lynn.game.jx3.baizhan \
+            --version "$APP_VERSION" \
+            "BaizhanSkill-macOS-Setup.pkg"
+
+      - name: Upload macOS workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BaizhanSkill-macOS
+          path: |
+            BaizhanSkill-macOS-Setup.pkg
+          if-no-files-found: error
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build-windows
+      - build-macos
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download packaged clients
+        uses: actions/download-artifact@v4
+        with:
+          pattern: BaizhanSkill-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Read release title
+        id: release-metadata
+        shell: bash
+        run: |
+          heading=$(grep -m1 "^## ${GITHUB_REF_NAME} " CHANGELOG.md || true)
+          title="${heading#\#\# }"
+          if [ -z "$title" ]; then
+            title="$GITHUB_REF_NAME"
+          fi
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ github.ref_name }}
-          files: BaizhanSkill-Windows-x64.zip
+          name: ${{ steps.release-metadata.outputs.title }}
+          files: release-assets/*
           generate_release_notes: true

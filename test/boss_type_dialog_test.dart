@@ -1,9 +1,13 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:baizhan_skill/main.dart';
 import 'package:baizhan_skill/boss_catalog_service.dart';
 import 'package:baizhan_skill/sync_service.dart';
 import 'package:baizhan_skill/update_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   test('release versions compare numerically', () {
@@ -28,6 +32,41 @@ void main() {
     expect(currentWeekKey(DateTime(2026, 9, 21)), '2026-09-21');
     expect(currentWeekKey(DateTime(2026, 9, 27)), '2026-09-21');
     expect(currentWeekKey(DateTime(2026, 9, 28)), '2026-09-28');
+  });
+
+  test('scheduled local data migration writes to the selected file', () async {
+    final directory = await Directory.systemTemp.createTemp('baizhan-test-');
+    addTearDown(() => directory.delete(recursive: true));
+    final target = File('${directory.path}/baizhan-skill-data.json');
+    final raw = jsonEncode({
+      'characters': [],
+      'bosses': [],
+      'importantSkills': [],
+      'purpleSkills': [],
+      'maxSkillRank': 10,
+      'selectedCharacterId': '',
+      'page': 0,
+      'navigationOrder': defaultNavigationOrder,
+      'navigationVisible': defaultNavigationVisible,
+      'navigationLabels': <String, String>{}
+    });
+    SharedPreferences.setMockInitialValues({
+      SkillStore.storageKey: raw,
+      SkillStore.pendingLocalDataPathKey: target.path
+    });
+
+    final store = SkillStore(
+        bossCatalogService: _FakeBossCatalogService(const RemoteBossCatalog(
+            version: 1, updatedAt: '', notes: '', bosses: [])));
+    await store.load();
+
+    expect(store.localDataPath, target.path);
+    expect(store.localDataMigrationPending, isFalse);
+    expect(await target.readAsString(), raw);
+    expect(
+        (await SharedPreferences.getInstance())
+            .getString(SkillStore.storageKey),
+        isNull);
   });
 
   test('Boss collection progress uses the next rank target', () {

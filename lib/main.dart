@@ -425,6 +425,8 @@ class SkillStore extends ChangeNotifier {
   String? pendingSkillPageCharacterId;
   int? pendingSkillPageMaxRank;
   static const storageKey = 'battle_skill_data_v3';
+  static const localDataPathKey = 'local_data_path';
+  static const pendingLocalDataPathKey = 'pending_local_data_path';
   static const bossCatalogVersionKey = 'boss_catalog_version';
   static const bossCatalogSkippedVersionKey = 'boss_catalog_skipped_version';
   SharedPreferences? _prefs;
@@ -444,6 +446,11 @@ class SkillStore extends ChangeNotifier {
   List<RemoteBackup> remoteBackups = [];
   RemoteBackup? newerRemoteBackup;
   RemoteBossCatalog? availableBossCatalog;
+  String? localDataPath;
+  String? pendingLocalDataPath;
+  bool localDataMigrationPending = false;
+  bool _localStorageReady = false;
+  Future<void> _localWriteQueue = Future<void>.value();
   int bossCatalogVersion = 1;
   int? skippedBossCatalogVersion;
   bool bossCatalogCheckBusy = false;
@@ -473,7 +480,10 @@ class SkillStore extends ChangeNotifier {
     currentRemoteBackupPath = await syncSettingsStore.loadCurrentBackupPath();
     bossCatalogVersion = _prefs!.getInt(bossCatalogVersionKey) ?? 1;
     skippedBossCatalogVersion = _prefs!.getInt(bossCatalogSkippedVersionKey);
-    final raw = _prefs!.getString(storageKey);
+    await _migratePendingLocalData();
+    localDataPath = _prefs!.getString(localDataPathKey);
+    final raw = await _readLocalData();
+    _localStorageReady = true;
     if (raw == null)
       _seed();
     else
@@ -484,6 +494,90 @@ class SkillStore extends ChangeNotifier {
     notifyListeners();
     unawaited(_initializeRemoteSync());
     unawaited(checkForBossCatalogUpdate());
+  }
+
+  Future<String?> _readLocalData() async {
+    final path = localDataPath;
+    if (path == null || path.trim().isEmpty) {
+      return _prefs?.getString(storageKey);
+    }
+    try {
+      final file = File(path);
+      if (!await file.exists()) return null;
+      final raw = await file.readAsString();
+      return raw.trim().isEmpty ? null : raw;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> _readDataFromPath(String? path) async {
+    if (path == null || path.trim().isEmpty) {
+      return _prefs?.getString(storageKey);
+    }
+    try {
+      final file = File(path);
+      if (!await file.exists()) return null;
+      final raw = await file.readAsString();
+      return raw.trim().isEmpty ? null : raw;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _migratePendingLocalData() async {
+    final pending = _prefs?.getString(pendingLocalDataPathKey);
+    if (pending == null) return;
+
+    localDataMigrationPending = true;
+    pendingLocalDataPath = pending.trim().isEmpty ? null : pending.trim();
+    final previousPath = _prefs?.getString(localDataPathKey);
+    final raw = await _readDataFromPath(previousPath);
+    final targetPath = pending.trim().isEmpty ? null : pending.trim();
+    try {
+      if (targetPath == null) {
+        if (raw != null) await _prefs?.setString(storageKey, raw);
+        await _prefs?.remove(localDataPathKey);
+      } else {
+        final target = File(targetPath);
+        await target.parent.create(recursive: true);
+        if (raw != null) await target.writeAsString(raw);
+        await _prefs?.setString(localDataPathKey, targetPath);
+        await _prefs?.remove(storageKey);
+      }
+      await _prefs?.remove(pendingLocalDataPathKey);
+      localDataMigrationPending = false;
+      pendingLocalDataPath = null;
+    } catch (_) {
+      // Keep the pending path so the next launch can retry the migration.
+    }
+  }
+
+  Future<void> _persistLocalData(String encoded) async {
+    final path = localDataPath;
+    if (path == null || path.trim().isEmpty) {
+      await _prefs?.setString(storageKey, encoded);
+      return;
+    }
+    final file = File(path);
+    await file.parent.create(recursive: true);
+    await file.writeAsString(encoded);
+  }
+
+  String localDataLocationLabel() {
+    if (localDataMigrationPending) {
+      final target = pendingLocalDataPath;
+      return target == null ? '重启后迁移到系统默认位置' : '重启后迁移到：$target';
+    }
+    return localDataPath ?? '系统默认位置（应用数据目录）';
+  }
+
+  Future<void> scheduleLocalDataMigration(String? path) async {
+    final normalized = path?.trim();
+    localDataMigrationPending = true;
+    pendingLocalDataPath = normalized?.isEmpty == true ? null : normalized;
+    await _prefs?.setString(pendingLocalDataPathKey, normalized ?? '');
+    notifyListeners();
   }
 
   Future<void> _initializeRemoteSync() async {
@@ -738,7 +832,14 @@ class SkillStore extends ChangeNotifier {
         'navigationLabels': navigationLabels
       };
   void _save() {
-    _prefs?.setString(storageKey, jsonEncode(_json()));
+    final encoded = jsonEncode(_json());
+    if (_localStorageReady) {
+      _localWriteQueue = _localWriteQueue
+          .then((_) => _persistLocalData(encoded))
+          .catchError((_) {});
+    } else {
+      unawaited(_prefs?.setString(storageKey, encoded));
+    }
     _dataRevision++;
     _scheduleChangeSync();
   }
@@ -969,7 +1070,7 @@ class SkillStore extends ChangeNotifier {
       lastSyncAt = DateTime.now();
       await syncSettingsStore.saveLastSyncAt(lastSyncAt!);
       await syncSettingsStore.saveCurrentBackupPath(backup.path);
-      await _prefs?.setString(storageKey, jsonEncode(_json()));
+      await _persistLocalData(jsonEncode(_json()));
       _syncedRevision = _dataRevision;
       syncMessage = '已恢复 · ${backup.name}';
       return true;
@@ -4847,6 +4948,14 @@ class SettingsPage extends StatelessWidget {
             onTap: () => _selectThemeMode(context)),
         const SizedBox(height: 10),
         _SettingCard(
+            icon: Icons.folder_open_outlined,
+            title: '本地数据位置',
+            subtitle: store.localDataLocationLabel(),
+            trailing: Text(store.localDataMigrationPending ? '待重启' : '修改',
+                style: const TextStyle(color: teal, fontSize: 12)),
+            onTap: () => _selectLocalDataPath(context)),
+        const SizedBox(height: 10),
+        _SettingCard(
             icon: Icons.view_sidebar_outlined,
             title: '导航栏配置',
             subtitle: '选择左侧显示的页面，并拖动调整顺序',
@@ -4876,6 +4985,47 @@ class SettingsPage extends StatelessWidget {
         const SizedBox(height: 16),
         const AppVersionText()
       ]));
+
+  Future<void> _selectLocalDataPath(BuildContext context) async {
+    try {
+      final currentPath = store.localDataPath;
+      final selected = await FilePicker.saveFile(
+          dialogTitle: '选择本地数据文件位置',
+          initialDirectory:
+              currentPath == null ? null : File(currentPath).parent.path,
+          fileName: 'baizhan-skill-data.json',
+          type: FileType.custom,
+          allowedExtensions: ['json']);
+      if (selected == null || selected.trim().isEmpty || !context.mounted) {
+        return;
+      }
+      if (selected == currentPath && !store.localDataMigrationPending) return;
+      final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+                  title: const Text('修改本地数据位置'),
+                  content: Text('重启应用后会把当前数据迁移到：\n$selected'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(dialogContext, false),
+                        child: const Text('取消')),
+                    FilledButton(
+                        onPressed: () => Navigator.pop(dialogContext, true),
+                        child: const Text('确认修改'))
+                  ]));
+      if (confirmed != true) return;
+      await store.scheduleLocalDataMigration(selected);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('已记录新的本地数据位置，请重启应用完成迁移')));
+      }
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('选择位置失败：$error')));
+      }
+    }
+  }
 
   Future<void> _configureNavigation(BuildContext context) async {
     final order = [...store.navigationOrder];
