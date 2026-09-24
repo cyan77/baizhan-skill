@@ -619,6 +619,8 @@ class SkillStore extends ChangeNotifier {
   List<RemoteBackup> remoteBackups = [];
   RemoteBackup? newerRemoteBackup;
   RemoteBossCatalog? availableBossCatalog;
+  AppRelease? availableAppUpdate;
+  bool appUpdateCheckBusy = false;
   String? localDataPath;
   String? pendingLocalDataPath;
   bool localDataMigrationPending = false;
@@ -675,6 +677,7 @@ class SkillStore extends ChangeNotifier {
     notifyListeners();
     unawaited(_initializeRemoteSync());
     unawaited(checkForBossCatalogUpdate());
+    unawaited(checkForAppUpdate());
   }
 
   Future<String?> _readLocalData() async {
@@ -805,6 +808,33 @@ class SkillStore extends ChangeNotifier {
       bossCatalogCheckBusy = false;
       notifyListeners();
     }
+  }
+
+  Future<bool> checkForAppUpdate() async {
+    if (appUpdateCheckBusy) return false;
+    appUpdateCheckBusy = true;
+    notifyListeners();
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final release = await UpdateService().fetchLatestRelease();
+      if (isVersionNewer(release.version, packageInfo.version)) {
+        availableAppUpdate = release;
+        return true;
+      }
+      availableAppUpdate = null;
+      return false;
+    } catch (_) {
+      // Startup update checks are best-effort and should not interrupt the app.
+      return false;
+    } finally {
+      appUpdateCheckBusy = false;
+      notifyListeners();
+    }
+  }
+
+  void dismissAppUpdate() {
+    availableAppUpdate = null;
+    notifyListeners();
   }
 
   void dismissBossCatalogUpdate() {
@@ -2315,6 +2345,56 @@ class _DesktopScrollBehavior extends MaterialScrollBehavior {
       };
 }
 
+class _AppUpdateBanner extends StatelessWidget {
+  const _AppUpdateBanner({required this.store});
+
+  final SkillStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    final release = store.availableAppUpdate;
+    if (release == null) return const SizedBox.shrink();
+    return Container(
+        width: double.infinity,
+        margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+        padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+        decoration: BoxDecoration(
+            color: const Color(0xffe8f3ee),
+            border: Border.all(color: const Color(0xffc5d5ce)),
+            borderRadius: BorderRadius.circular(12)),
+        child: Row(children: [
+          const Icon(Icons.system_update_outlined, color: teal, size: 20),
+          const SizedBox(width: 9),
+          Expanded(
+              child: Text('发现新版本 v${release.version}',
+                  style: const TextStyle(
+                      color: ink, fontSize: 13, fontWeight: FontWeight.w600))),
+          TextButton(
+              onPressed: () async {
+                final uri = release.platformDownloadUri;
+                if (uri == null) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('当前 Release 没有对应平台的安装包')));
+                  }
+                  return;
+                }
+                final opened =
+                    await launchUrl(uri, mode: LaunchMode.externalApplication);
+                if (!opened && context.mounted) {
+                  ScaffoldMessenger.of(context)
+                      .showSnackBar(const SnackBar(content: Text('无法打开下载地址')));
+                }
+              },
+              child: Text(release.platformDownloadLabel)),
+          IconButton(
+              tooltip: '稍后提醒',
+              onPressed: store.dismissAppUpdate,
+              icon: const Icon(Icons.close, color: muted, size: 18))
+        ]));
+  }
+}
+
 class Shell extends StatelessWidget {
   const Shell({required this.store, super.key});
   final SkillStore store;
@@ -2324,6 +2404,8 @@ class Shell extends StatelessWidget {
         builder: (context, constraints) {
           final wide = constraints.maxWidth >= 800;
           final content = Column(children: [
+            if (store.availableAppUpdate != null)
+              _AppUpdateBanner(store: store),
             if (store.availableBossCatalog != null)
               _BossCatalogUpdateBanner(store: store),
             Expanded(child: _page(context))
@@ -6521,8 +6603,15 @@ class _UpdateSettingCardState extends State<_UpdateSettingCard> {
                       label: Text(release.platformDownloadLabel))
                 ]));
     if (download != true) return;
-    final opened = await launchUrl(release.platformDownloadUri,
-        mode: LaunchMode.externalApplication);
+    final uri = release.platformDownloadUri;
+    if (uri == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('当前 Release 没有对应平台的安装包')));
+      }
+      return;
+    }
+    final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!opened && mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('无法打开下载地址')));

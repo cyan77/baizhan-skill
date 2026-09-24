@@ -31,6 +31,30 @@ void main() {
         isFalse);
   });
 
+  test('release download uses the platform asset instead of the tag page', () {
+    final release = AppRelease(
+        version: '0.1.20',
+        notes: '',
+        pageUri: Uri.parse(
+            'https://github.com/cyan77/baizhan-skill/releases/tag/v0.1.20'),
+        assets: const {
+          windowsPortableAssetName:
+              'https://github.com/cyan77/baizhan-skill/releases/download/v0.1.20/BaizhanSkill-Windows-x64.zip',
+          windowsInstallerAssetName:
+              'https://github.com/cyan77/baizhan-skill/releases/download/v0.1.20/BaizhanSkill-Windows-x64-Setup.exe',
+          macosInstallerAssetName:
+              'https://github.com/cyan77/baizhan-skill/releases/download/v0.1.20/BaizhanSkill-macOS-Setup.pkg'
+        }.map((key, value) => MapEntry(key, Uri.parse(value))));
+
+    final expected = Platform.isWindows
+        ? windowsUpdateAssetName(installed: isWindowsInstalledBuild())
+        : Platform.isMacOS
+            ? macosInstallerAssetName
+            : null;
+    expect(release.platformDownloadUri?.path,
+        expected == null ? release.pageUri.path : contains(expected));
+  });
+
   test('navigation configuration supports visibility and ordering', () {
     final store = SkillStore();
     store.setNavigationConfiguration(

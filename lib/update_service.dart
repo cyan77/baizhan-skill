@@ -19,7 +19,7 @@ class AppRelease {
   final Uri pageUri;
   final Map<String, Uri> assets;
 
-  Uri get platformDownloadUri {
+  Uri? get platformDownloadUri {
     final candidates = Platform.isWindows
         ? [windowsUpdateAssetName(installed: isWindowsInstalledBuild())]
         : Platform.isMacOS
@@ -29,7 +29,7 @@ class AppRelease {
       final uri = assets[name];
       if (uri != null) return uri;
     }
-    return pageUri;
+    return Platform.isWindows || Platform.isMacOS ? null : pageUri;
   }
 
   String get platformDownloadLabel {
