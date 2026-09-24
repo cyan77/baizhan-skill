@@ -2671,9 +2671,6 @@ class _PageHorizontalScrollScope extends InheritedWidget {
   final ScrollController controller;
   final double viewportWidth;
 
-  static _PageHorizontalScrollScope? maybeOf(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<_PageHorizontalScrollScope>();
-
   @override
   bool updateShouldNotify(_PageHorizontalScrollScope oldWidget) =>
       controller != oldWidget.controller ||
