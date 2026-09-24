@@ -174,6 +174,11 @@ void main() {
     await tester.pumpWidget(
         MaterialApp(home: Scaffold(body: AllSkillsPage(store: store))));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('设置当前角色全部技能重数'));
+    await tester.pumpAndSettle();
+    expect(find.text('7 重'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
     expect(tester.getTopLeft(find.text('低进度首领')).dy,
         lessThan(tester.getTopLeft(find.text('高进度首领')).dy));
 
@@ -297,14 +302,17 @@ void main() {
 
     expect(find.text('花间游 · 20'), findsOneWidget);
     expect(find.text('丐帮 · 8'), findsOneWidget);
-    expect(find.text('全部门派'), findsOneWidget);
+    expect(find.byType(TextField), findsOneWidget);
+    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty);
     expect(find.text('全部定位'), findsOneWidget);
     expect(find.text('当前查看：双心法角色 · 万花 · 花间游 · 换将点 20'), findsOneWidget);
 
-    await tester.tap(find.text('全部门派'));
+    await tester.tap(find.byType(TextField));
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(TextField, '输入筛选'), findsOneWidget);
-    await tester.enterText(find.widgetWithText(TextField, '输入筛选'), '万');
+    expect(find.byType(TextField), findsOneWidget);
+    expect(find.text('输入筛选'), findsNothing);
+    await tester.enterText(find.byType(TextField), '万');
     await tester.pumpAndSettle();
     expect(find.text('万花'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -462,6 +470,7 @@ void main() {
         home: Scaffold(body: CharacterManagementPage(store: store))));
     await tester.pumpAndSettle();
 
+    expect(find.text('双击编辑角色'), findsNothing);
     await tester.tap(find.text('卡片角色'));
     await tester.pump(const Duration(milliseconds: 100));
     await tester.tap(find.text('卡片角色'));
@@ -696,6 +705,21 @@ void main() {
     expect(store.statRules.rankMultipliers[11], 41.5);
   });
 
+  test('the current 1-10 rank rules stay read-only after restoring old data',
+      () {
+    final rules = BossStatRules.fromJson(
+      {
+        'rankMultipliers': {'1': 99},
+        'threeSkillBonuses': {'10': 99999},
+        'editableFromRank': 1,
+      },
+      maxSkillRank: 10,
+    );
+
+    expect(rules.editableFromRank, 11);
+    expect(minimumEditableRankFor(10), 11);
+  });
+
   test('remote Boss catalogs carry spirit and stamina rules', () {
     final catalog = RemoteBossCatalog.fromJson({
       'type': 'baizhan-bosses',
@@ -827,6 +851,41 @@ void main() {
         ['second', 'archived', 'first']);
   });
 
+  test('character drag ordering inserts before the target', () {
+    final store = SkillStore();
+    store.characters.addAll([
+      CharacterData(
+          id: 'insert-first',
+          name: '插入一',
+          gender: '女性',
+          school: '未设置',
+          mind: '未设置',
+          position: 'dps',
+          levels: const {}),
+      CharacterData(
+          id: 'insert-second',
+          name: '插入二',
+          gender: '女性',
+          school: '未设置',
+          mind: '未设置',
+          position: 'dps',
+          levels: const {}),
+      CharacterData(
+          id: 'insert-third',
+          name: '插入三',
+          gender: '女性',
+          school: '未设置',
+          mind: '未设置',
+          position: 'dps',
+          levels: const {})
+    ]);
+
+    store.reorderCharacter('insert-first', 'insert-third');
+
+    expect(store.characters.map((item) => item.id),
+        ['insert-second', 'insert-first', 'insert-third']);
+  });
+
   testWidgets('character cards can be long-pressed and dragged to reorder',
       (tester) async {
     final store = SkillStore();
@@ -854,9 +913,9 @@ void main() {
     await tester.pumpAndSettle();
 
     final gesture =
-        await tester.startGesture(tester.getCenter(find.text('拖动一')));
+        await tester.startGesture(tester.getCenter(find.text('拖动二')));
     await tester.pump(const Duration(milliseconds: 600));
-    await gesture.moveTo(tester.getCenter(find.text('拖动二')));
+    await gesture.moveTo(tester.getCenter(find.text('拖动一')));
     await tester.pump();
     await gesture.up();
     await tester.pumpAndSettle();
@@ -1014,6 +1073,103 @@ void main() {
     expect(store.syncMessage, contains('请先恢复'));
   });
 
+  test('local and remote edits require an explicit conflict choice', () async {
+    final service = _FakeWebDavSyncService();
+    final store = SkillStore(
+        webDavSyncService: service, syncSettingsStore: _FakeSyncSettingsStore())
+      ..syncConfig = const SyncConfig(
+          url: 'https://example.com',
+          username: 'user',
+          password: 'password',
+          remotePath: '/backup.json')
+      ..lastSyncAt = DateTime(2026, 9, 20);
+    store.addCharacter(
+        name: '本地修改', gender: '女性', school: '未设置', mind: '未设置', position: '输出');
+
+    await store.checkForNewerBackup();
+    expect(store.hasSyncConflict, isTrue);
+    expect(await store.syncNow(), isFalse);
+    expect(store.syncMessage, contains('本地和云端'));
+    expect(service.uploadCalled, isFalse);
+
+    expect(await store.syncNow(overwriteRemoteConflict: true), isTrue,
+        reason: store.syncMessage ?? '没有同步结果');
+    expect(service.uploadCalled, isTrue);
+  });
+
+  test('non-conflicting local and remote edits are merged and uploaded',
+      () async {
+    final service = _FakeWebDavSyncService(
+        downloadPayload: jsonEncode({
+      'characters': [
+        {
+          'id': 'remote-character',
+          'name': '云端修改',
+          'gender': '女性',
+          'school': '未设置',
+          'mind': '未设置',
+          'position': '输出',
+          'swapPoints': 0,
+          'weeklyCompletedWeek': '',
+          'levels': <String, int>{},
+          'archived': false
+        }
+      ],
+      'bosses': <Map<String, dynamic>>[],
+      'importantSkills': <String>[],
+      'purpleSkills': <String>[],
+      'maxSkillRank': 10,
+      'rules': <String, dynamic>{}
+    }));
+    final store = SkillStore(
+        webDavSyncService: service, syncSettingsStore: _FakeSyncSettingsStore())
+      ..syncConfig = const SyncConfig(
+          url: 'https://example.com',
+          username: 'user',
+          password: 'password',
+          remotePath: '/backup.json');
+    expect(await store.syncNow(), isTrue);
+    store.lastSyncAt = DateTime(2026, 9, 20);
+    store.addCharacter(
+        name: '本地修改', gender: '女性', school: '未设置', mind: '未设置', position: '输出');
+    await store.checkForNewerBackup();
+
+    final result = await store.mergeRemoteChanges(store.newerRemoteBackup!);
+
+    expect(result.merged, isTrue, reason: result.message);
+    expect(store.characters.map((character) => character.name),
+        containsAll(<String>['本地修改', '云端修改']));
+    expect(service.uploadCalled, isTrue);
+  });
+
+  test('changing the WebDAV target clears the previous sync cursor', () async {
+    final settings = _FakeSyncSettingsStore();
+    final store = SkillStore(
+        syncSettingsStore: settings,
+        webDavSyncService: _FakeWebDavSyncService(backups: const []))
+      ..syncConfig = const SyncConfig(
+          url: 'https://old.example.com',
+          username: 'old-user',
+          password: 'old-password',
+          remotePath: '/old.json')
+      ..lastSyncAt = DateTime(2026, 9, 20)
+      ..currentRemoteBackupPath = '/old-backup.json'
+      ..remoteBackups = const [
+        RemoteBackup(name: '旧备份', path: '/old-backup.json')
+      ];
+
+    await store.saveSyncConfig(const SyncConfig(
+        url: 'https://new.example.com',
+        username: 'new-user',
+        password: 'new-password',
+        remotePath: '/new.json'));
+
+    expect(store.lastSyncAt, isNull);
+    expect(store.currentRemoteBackupPath, isNull);
+    expect(store.remoteBackups, isEmpty);
+    expect(settings.clearSyncCursorCalled, isTrue);
+  });
+
   test('invalid cloud backup does not erase current local data', () async {
     final service = _FakeWebDavSyncService(
         downloadPayload: '{"characters": [], "importantSkills": []}');
@@ -1118,11 +1274,34 @@ class _FakeBossCatalogService extends BossCatalogService {
   Future<RemoteBossCatalog> fetch() async => catalog;
 }
 
+class _FakeSyncSettingsStore extends SyncSettingsStore {
+  bool clearSyncCursorCalled = false;
+
+  @override
+  Future<void> save(SyncConfig config) async {}
+
+  @override
+  Future<void> clearSyncCursor() async {
+    clearSyncCursorCalled = true;
+  }
+
+  @override
+  Future<void> saveLastSyncAt(DateTime value) async {}
+
+  @override
+  Future<void> saveCurrentBackupPath(String? path) async {}
+
+  @override
+  Future<void> saveLastSyncedData(String data) async {}
+}
+
 class _FakeWebDavSyncService extends WebDavSyncService {
-  _FakeWebDavSyncService({this.downloadPayload = '{}'});
+  _FakeWebDavSyncService({this.downloadPayload = '{}', this.backups});
 
   final String downloadPayload;
+  final List<RemoteBackup>? backups;
   bool uploadCalled = false;
+  String? lastUploadPayload;
   SyncConfig? testedConfig;
 
   @override
@@ -1131,7 +1310,9 @@ class _FakeWebDavSyncService extends WebDavSyncService {
   }
 
   @override
-  Future<List<RemoteBackup>> listBackups(SyncConfig config) async => [
+  Future<List<RemoteBackup>> listBackups(SyncConfig config) async =>
+      backups ??
+      [
         RemoteBackup(
             name: 'backup_20260921_120000000_device.json',
             path: '/newer.json',
@@ -1141,6 +1322,7 @@ class _FakeWebDavSyncService extends WebDavSyncService {
   @override
   Future<RemoteBackup> upload(SyncConfig config, String json) async {
     uploadCalled = true;
+    lastUploadPayload = json;
     return const RemoteBackup(name: 'uploaded.json', path: '/uploaded.json');
   }
 

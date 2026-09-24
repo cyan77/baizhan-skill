@@ -31,6 +31,176 @@ const gold = Color(0xffb56a18);
 const formLabelStyle = TextStyle(
     color: muted, fontSize: 12, fontWeight: FontWeight.w400, height: 1.1);
 
+final _missingJsonValue = Object();
+
+class _JsonMergeState {
+  final conflicts = <String>[];
+
+  void addConflict(String path) {
+    if (!conflicts.contains(path)) conflicts.add(path);
+  }
+}
+
+bool _sameJson(dynamic left, dynamic right) {
+  if (identical(left, right)) return true;
+  if (left is Map && right is Map) {
+    if (left.length != right.length ||
+        !left.keys.every((key) => right.containsKey(key))) return false;
+    return left.keys.every((key) => _sameJson(left[key], right[key]));
+  }
+  if (left is List && right is List) {
+    return left.length == right.length &&
+        List.generate(
+                left.length, (index) => _sameJson(left[index], right[index]))
+            .every((value) => value);
+  }
+  return left == right;
+}
+
+bool _sameStringList(List<String> left, List<String> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
+}
+
+String? _mergeItemKey(dynamic value) {
+  if (value is! Map) return null;
+  final key = value['id'] ?? value['name'];
+  return key is String && key.isNotEmpty ? key : null;
+}
+
+dynamic _mergeJsonValue(dynamic base, dynamic local, dynamic remote,
+    String path, _JsonMergeState state) {
+  if (_sameJson(local, remote)) return local;
+  if (_sameJson(local, base)) return remote;
+  if (_sameJson(remote, base)) return local;
+
+  if (local is Map && remote is Map) {
+    final baseMap = base is Map ? base : const <dynamic, dynamic>{};
+    final keys = <dynamic>{...baseMap.keys, ...local.keys, ...remote.keys};
+    final merged = <dynamic, dynamic>{};
+    for (final key in keys) {
+      final value = _mergeJsonValue(
+          baseMap.containsKey(key) ? baseMap[key] : _missingJsonValue,
+          local.containsKey(key) ? local[key] : _missingJsonValue,
+          remote.containsKey(key) ? remote[key] : _missingJsonValue,
+          '$path.$key',
+          state);
+      if (!identical(value, _missingJsonValue)) merged[key] = value;
+    }
+    return merged;
+  }
+
+  if (local is List && remote is List) {
+    final keyed = local.every((item) => _mergeItemKey(item) != null) &&
+        remote.every((item) => _mergeItemKey(item) != null);
+    if (keyed) {
+      final baseItems = <String, dynamic>{
+        for (final item in base is List ? base : const [])
+          if (_mergeItemKey(item) != null) _mergeItemKey(item)!: item
+      };
+      final localItems = <String, dynamic>{
+        for (final item in local) _mergeItemKey(item)!: item
+      };
+      final remoteItems = <String, dynamic>{
+        for (final item in remote) _mergeItemKey(item)!: item
+      };
+      final keys = <String>{
+        ...baseItems.keys,
+        ...localItems.keys,
+        ...remoteItems.keys
+      };
+      final mergedByKey = <String, dynamic>{};
+      for (final key in keys) {
+        final value = _mergeJsonValue(
+            baseItems[key] ?? _missingJsonValue,
+            localItems[key] ?? _missingJsonValue,
+            remoteItems[key] ?? _missingJsonValue,
+            '$path[$key]',
+            state);
+        if (!identical(value, _missingJsonValue)) mergedByKey[key] = value;
+      }
+      final sharedKeys = baseItems.keys
+          .where((key) =>
+              localItems.containsKey(key) && remoteItems.containsKey(key))
+          .toSet();
+      final baseSharedOrder =
+          baseItems.keys.where(sharedKeys.contains).toList();
+      final localSharedOrder =
+          localItems.keys.where(sharedKeys.contains).toList();
+      final remoteSharedOrder =
+          remoteItems.keys.where(sharedKeys.contains).toList();
+      final localReordered =
+          !_sameStringList(localSharedOrder, baseSharedOrder);
+      final remoteReordered =
+          !_sameStringList(remoteSharedOrder, baseSharedOrder);
+      if (localReordered &&
+          remoteReordered &&
+          !_sameStringList(localSharedOrder, remoteSharedOrder)) {
+        state.addConflict('$path顺序');
+      }
+      final preferredOrder = remoteReordered && !localReordered
+          ? remoteItems.keys.toList()
+          : localItems.keys.toList();
+      final orderedKeys = <String>[];
+      void appendKeys(Iterable<String> values) {
+        for (final key in values) {
+          if (!orderedKeys.contains(key)) orderedKeys.add(key);
+        }
+      }
+
+      appendKeys(preferredOrder);
+      appendKeys(localItems.keys);
+      appendKeys(remoteItems.keys);
+      appendKeys(baseItems.keys);
+      return orderedKeys
+          .where(mergedByKey.containsKey)
+          .map((key) => mergedByKey[key])
+          .toList();
+    }
+
+    if (local.every((item) => item is String) &&
+        remote.every((item) => item is String)) {
+      final baseSet =
+          (base is List ? base : const []).whereType<String>().toSet();
+      final localSet = local.cast<String>().toSet();
+      final remoteSet = remote.cast<String>().toSet();
+      final localAdded = localSet.difference(baseSet);
+      final remoteAdded = remoteSet.difference(baseSet);
+      final localRemoved = baseSet.difference(localSet);
+      final remoteRemoved = baseSet.difference(remoteSet);
+      if (localAdded.intersection(remoteRemoved).isNotEmpty ||
+          remoteAdded.intersection(localRemoved).isNotEmpty) {
+        state.addConflict(path);
+      }
+      final mergedSet = <String>{...baseSet, ...localAdded, ...remoteAdded}
+        ..removeAll(localRemoved)
+        ..removeAll(remoteRemoved);
+      return <String>[
+        ...local.where(mergedSet.contains),
+        ...remote.where(
+            (item) => mergedSet.contains(item) && !localSet.contains(item)),
+        ...mergedSet.where(
+            (item) => !localSet.contains(item) && !remoteSet.contains(item))
+      ];
+    }
+  }
+
+  state.addConflict(path);
+  return local;
+}
+
+class SyncMergeResult {
+  const SyncMergeResult(
+      {required this.merged, this.conflicts = const [], this.message});
+
+  final bool merged;
+  final List<String> conflicts;
+  final String? message;
+}
+
 class NavigationPageOption {
   const NavigationPageOption(
       {required this.id,
@@ -426,6 +596,8 @@ class SkillStore extends ChangeNotifier {
   String? pendingSkillPageCharacterId;
   int? pendingSkillPageMaxRank;
   static const storageKey = 'battle_skill_data_v3';
+  static const selectedCharacterIdKey = 'selected_character_id';
+  static const pageKey = 'selected_page';
   static const localDataPathKey = 'local_data_path';
   static const pendingLocalDataPathKey = 'pending_local_data_path';
   static const bossCatalogVersionKey = 'boss_catalog_version';
@@ -462,6 +634,7 @@ class SkillStore extends ChangeNotifier {
   Timer? _changeSyncTimer;
   int _dataRevision = 0;
   int _syncedRevision = 0;
+  String? _lastSyncedData;
   int _successfulSyncGeneration = 0;
   bool _syncInitialized = false;
   CharacterData? get selectedCharacter {
@@ -479,6 +652,7 @@ class SkillStore extends ChangeNotifier {
     syncConfig = await syncSettingsStore.load();
     lastSyncAt = await syncSettingsStore.loadLastSyncAt();
     currentRemoteBackupPath = await syncSettingsStore.loadCurrentBackupPath();
+    _lastSyncedData = await syncSettingsStore.loadLastSyncedData();
     bossCatalogVersion = _prefs!.getInt(bossCatalogVersionKey) ?? 1;
     skippedBossCatalogVersion = _prefs!.getInt(bossCatalogSkippedVersionKey);
     await _migratePendingLocalData();
@@ -489,6 +663,12 @@ class SkillStore extends ChangeNotifier {
       _seed();
     else
       _restore(jsonDecode(raw) as Map<String, dynamic>);
+    final savedSelectedCharacterId = _prefs!.getString(selectedCharacterIdKey);
+    if (savedSelectedCharacterId != null) {
+      selectedCharacterId = savedSelectedCharacterId;
+      _ensureSelectedCharacterIsActive();
+    }
+    page = (_prefs!.getInt(pageKey) ?? page).clamp(0, 7);
     _syncInitialized = true;
     _scheduleAutoSync();
     _scheduleRemoteBackupChecks();
@@ -819,6 +999,7 @@ class SkillStore extends ChangeNotifier {
       importantSkills.clear();
       purpleSkills.clear();
       _restore(data);
+      _saveNavigationState();
     } catch (_) {
       characters.clear();
       bosses.clear();
@@ -854,6 +1035,96 @@ class SkillStore extends ChangeNotifier {
         'navigationVisible': navigationVisible.toList(),
         'navigationLabels': navigationLabels
       };
+
+  Map<String, dynamic> _syncComparisonJson() => {
+        'characters': characters.map((item) => item.toJson()).toList(),
+        'bosses': bosses.map((item) => item.toJson()).toList(),
+        'importantSkills': importantSkills,
+        'purpleSkills': purpleSkills,
+        'maxSkillRank': maxSkillRank,
+        'rules': statRules.toJson()
+      };
+
+  String _syncComparisonData() => jsonEncode(_syncComparisonJson());
+
+  bool _sameSyncComparison(String left, String right) {
+    try {
+      return _sameJson(jsonDecode(left), jsonDecode(right));
+    } catch (_) {
+      return left == right;
+    }
+  }
+
+  String _syncComparisonDataFromRemote(Map<String, dynamic> data) =>
+      jsonEncode({
+        'characters':
+            data['characters'] is List ? data['characters'] : const [],
+        'bosses': data['bosses'] is List ? data['bosses'] : const [],
+        'importantSkills': data['importantSkills'] is List
+            ? data['importantSkills']
+            : const [],
+        'purpleSkills':
+            data['purpleSkills'] is List ? data['purpleSkills'] : const [],
+        'maxSkillRank': data['maxSkillRank'] ?? 10,
+        'rules': data['rules'] is Map ? data['rules'] : const {}
+      });
+
+  Future<void> _loadMissingSyncBase(
+      SyncConfig config, List<RemoteBackup> backups) async {
+    if (_lastSyncedData != null || currentRemoteBackupPath == null) return;
+    final current = backups
+        .where((backup) => backup.path == currentRemoteBackupPath)
+        .firstOrNull;
+    if (current == null) return;
+    try {
+      final raw = await webDavSyncService.downloadBackup(config, current);
+      final data = jsonDecode(raw);
+      if (data is! Map) return;
+      _lastSyncedData =
+          _syncComparisonDataFromRemote(Map<String, dynamic>.from(data));
+      await syncSettingsStore.saveLastSyncedData(_lastSyncedData!);
+    } catch (_) {
+      // A missing historical backup should not prevent the normal update check.
+    }
+  }
+
+  bool get hasLocalUnsyncedChanges {
+    final lastSynced = _lastSyncedData;
+    return lastSynced == null
+        ? _dataRevision > _syncedRevision
+        : !_sameSyncComparison(_syncComparisonData(), lastSynced);
+  }
+
+  bool get hasSyncConflict =>
+      newerRemoteBackup != null && hasLocalUnsyncedChanges;
+
+  String describeSyncConflict(String path) {
+    final characterId =
+        RegExp(r'characters\[([^\]]+)\]').firstMatch(path)?.group(1);
+    final skillId =
+        RegExp(r'(?:levels|skills)\[([^\]]+)\]').firstMatch(path)?.group(1);
+    final bossId = RegExp(r'bosses\[([^\]]+)\]').firstMatch(path)?.group(1);
+    final character = characterId == null ? null : _findCharacter(characterId);
+    final skill = skillId == null ? null : bossForSkill(skillId);
+    final boss = bossId == null
+        ? null
+        : bosses.where((item) => item.id == bossId).firstOrNull;
+    if (character != null && skill != null) {
+      return '角色「${character.name}」的技能「${skill.name}」';
+    }
+    if (character != null) return '角色「${character.name}」';
+    if (boss != null && skill != null) {
+      return '首领「${boss.name}」的技能「${skill.name}」';
+    }
+    if (boss != null) return '首领「${boss.name}」';
+    if (path.endsWith('顺序')) return '角色或首领排序';
+    if (path.contains('importantSkills')) return '重要技能列表';
+    if (path.contains('purpleSkills')) return '可交易技能列表';
+    if (path.contains('maxSkillRank')) return '最高重数';
+    if (path.contains('rules')) return '精耐规则';
+    return path;
+  }
+
   void _save() {
     final encoded = jsonEncode(_json());
     if (_localStorageReady) {
@@ -865,6 +1136,15 @@ class SkillStore extends ChangeNotifier {
     }
     _dataRevision++;
     _scheduleChangeSync();
+  }
+
+  void _saveNavigationState() {
+    final prefs = _prefs;
+    if (prefs == null) return;
+    unawaited(Future.wait([
+      prefs.setString(selectedCharacterIdKey, selectedCharacterId),
+      prefs.setInt(pageKey, page)
+    ]));
   }
 
   void _scheduleAutoSync() {
@@ -956,6 +1236,7 @@ class SkillStore extends ChangeNotifier {
     try {
       final backups = await webDavSyncService.listBackups(config);
       remoteBackups = backups;
+      await _loadMissingSyncBase(config, backups);
       final latest = backups.firstOrNull;
       final latestTime =
           latest == null ? null : webDavSyncService.backupTime(latest);
@@ -988,6 +1269,23 @@ class SkillStore extends ChangeNotifier {
   }
 
   Future<void> saveSyncConfig(SyncConfig config) async {
+    final previous = syncConfig;
+    final targetChanged = previous != null &&
+        (previous.url.trim() != config.url.trim() ||
+            previous.username.trim() != config.username.trim() ||
+            previous.password != config.password ||
+            previous.remotePath.trim() != config.remotePath.trim());
+    if (targetChanged) {
+      _changeSyncTimer?.cancel();
+      _remoteCheckTimer?.cancel();
+      _backupCheckRetryTimer?.cancel();
+      remoteBackups = [];
+      newerRemoteBackup = null;
+      lastSyncAt = null;
+      currentRemoteBackupPath = null;
+      _lastSyncedData = null;
+      await syncSettingsStore.clearSyncCursor();
+    }
     await syncSettingsStore.save(config);
     syncConfig = config;
     _scheduleAutoSync();
@@ -1016,10 +1314,12 @@ class SkillStore extends ChangeNotifier {
     }
   }
 
-  Future<bool> syncNow({bool silent = false}) async {
+  Future<bool> syncNow(
+      {bool silent = false, bool overwriteRemoteConflict = false}) async {
     if (syncBusy || restoreBusy) return false;
-    if (newerRemoteBackup != null) {
-      syncMessage = '发现较新的云端备份，请先恢复后再同步';
+    if (newerRemoteBackup != null && !overwriteRemoteConflict) {
+      syncMessage =
+          hasSyncConflict ? '本地和云端都已修改，请先选择保留哪一份' : '发现较新的云端备份，请先恢复后再同步';
       if (!silent) notifyListeners();
       return false;
     }
@@ -1034,6 +1334,7 @@ class SkillStore extends ChangeNotifier {
     syncBusy = true;
     notifyListeners();
     final revisionAtStart = _dataRevision;
+    final comparisonDataAtStart = _syncComparisonData();
     try {
       final backup =
           await webDavSyncService.upload(config, jsonEncode(_json()));
@@ -1044,6 +1345,8 @@ class SkillStore extends ChangeNotifier {
       newerRemoteBackup = null;
       await syncSettingsStore.saveLastSyncAt(lastSyncAt!);
       await syncSettingsStore.saveCurrentBackupPath(backup.path);
+      _lastSyncedData = comparisonDataAtStart;
+      await syncSettingsStore.saveLastSyncedData(comparisonDataAtStart);
       syncMessage = '已同步 · ${backup.name}';
       return true;
     } catch (error) {
@@ -1053,6 +1356,73 @@ class SkillStore extends ChangeNotifier {
       syncBusy = false;
       notifyListeners();
       _scheduleChangeSync();
+    }
+  }
+
+  Future<SyncMergeResult> mergeRemoteChanges(RemoteBackup backup) async {
+    if (syncBusy || restoreBusy) {
+      return const SyncMergeResult(merged: false, message: '当前正在同步');
+    }
+    final config = syncConfig;
+    final baseData = _lastSyncedData;
+    if (config == null || !config.isValid) {
+      return const SyncMergeResult(merged: false, message: '尚未配置完整的 WebDAV');
+    }
+    if (baseData == null) {
+      return const SyncMergeResult(merged: false, message: '缺少上次同步基准，暂时无法自动合并');
+    }
+
+    _changeSyncTimer?.cancel();
+    restoreBusy = true;
+    notifyListeners();
+    try {
+      final raw = await webDavSyncService.downloadBackup(config, backup);
+      final remoteRaw = jsonDecode(raw);
+      final baseRaw = jsonDecode(baseData);
+      if (remoteRaw is! Map || baseRaw is! Map) {
+        return const SyncMergeResult(merged: false, message: '同步数据格式不正确');
+      }
+      final state = _JsonMergeState();
+      final merged = _mergeJsonValue(
+          baseRaw,
+          _syncComparisonJson(),
+          jsonDecode(_syncComparisonDataFromRemote(
+              Map<String, dynamic>.from(remoteRaw))),
+          '数据',
+          state);
+      if (state.conflicts.isNotEmpty || merged is! Map) {
+        syncMessage = '有 ${state.conflicts.length} 项同时修改，无法自动合并';
+        return SyncMergeResult(
+            merged: false,
+            conflicts: List.unmodifiable(state.conflicts),
+            message: syncMessage);
+      }
+
+      final mergedData = _json();
+      for (final key in const [
+        'characters',
+        'bosses',
+        'importantSkills',
+        'purpleSkills',
+        'maxSkillRank',
+        'rules'
+      ]) {
+        if (merged.containsKey(key)) mergedData[key] = merged[key];
+      }
+      _replaceData(Map<String, dynamic>.from(mergedData));
+      restoreBusy = false;
+      notifyListeners();
+      final uploaded = await syncNow(overwriteRemoteConflict: true);
+      final message = uploaded ? '已合并本地和云端的非冲突修改并上传' : syncMessage;
+      return SyncMergeResult(merged: uploaded, message: message);
+    } catch (error) {
+      syncMessage = '自动合并失败：$error';
+      return SyncMergeResult(merged: false, message: syncMessage);
+    } finally {
+      if (restoreBusy) {
+        restoreBusy = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -1094,6 +1464,8 @@ class SkillStore extends ChangeNotifier {
       await syncSettingsStore.saveLastSyncAt(lastSyncAt!);
       await syncSettingsStore.saveCurrentBackupPath(backup.path);
       await _persistLocalData(jsonEncode(_json()));
+      _lastSyncedData = _syncComparisonData();
+      await syncSettingsStore.saveLastSyncedData(_lastSyncedData!);
       _syncedRevision = _dataRevision;
       syncMessage = '已恢复 · ${backup.name}';
       return true;
@@ -1138,8 +1510,9 @@ class SkillStore extends ChangeNotifier {
   void selectCharacter(String id) {
     final character = _findCharacter(id);
     if (character == null || character.archived) return;
+    if (selectedCharacterId == id) return;
     selectedCharacterId = id;
-    _save();
+    _saveNavigationState();
     notifyListeners();
   }
 
@@ -1158,8 +1531,9 @@ class SkillStore extends ChangeNotifier {
   }
 
   void setPage(int value) {
+    if (page == value) return;
     page = value;
-    _save();
+    _saveNavigationState();
     notifyListeners();
   }
 
@@ -1453,13 +1827,35 @@ class SkillStore extends ChangeNotifier {
 
   void reorderCharacter(String characterId, String targetCharacterId) {
     if (characterId == targetCharacterId) return;
-    final oldIndex = characters.indexWhere((item) => item.id == characterId);
-    final newIndex =
-        characters.indexWhere((item) => item.id == targetCharacterId);
-    if (oldIndex < 0 || newIndex < 0) return;
-    final character = characters[oldIndex];
-    characters[oldIndex] = characters[newIndex];
-    characters[newIndex] = character;
+    final source = _findCharacter(characterId);
+    final target = _findCharacter(targetCharacterId);
+    if (source == null ||
+        target == null ||
+        source.archived != target.archived) {
+      return;
+    }
+
+    // Reorder within the enabled/disabled group while keeping the other
+    // group's slots fixed. Dropping on a card inserts before that card instead
+    // of swapping the two cards.
+    final groupIndexes = <int>[];
+    for (var index = 0; index < characters.length; index++) {
+      if (characters[index].archived == source.archived) {
+        groupIndexes.add(index);
+      }
+    }
+    final orderedIds =
+        groupIndexes.map((index) => characters[index].id).toList();
+    orderedIds.remove(characterId);
+    final targetPosition = orderedIds.indexOf(targetCharacterId);
+    if (targetPosition < 0) return;
+    orderedIds.insert(targetPosition, characterId);
+    final charactersById = {
+      for (final item in characters) item.id: item,
+    };
+    for (var index = 0; index < groupIndexes.length; index++) {
+      characters[groupIndexes[index]] = charactersById[orderedIds[index]]!;
+    }
     _save();
     notifyListeners();
   }
@@ -1807,59 +2203,106 @@ class SkillDraftController {
   void dispose() => controller.dispose();
 }
 
-class BattleSkillsApp extends StatelessWidget {
+class BattleSkillsApp extends StatefulWidget {
   const BattleSkillsApp({required this.store, super.key});
   final SkillStore store;
+
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-      animation: store,
-      builder: (context, child) => MaterialApp(
-          debugShowCheckedModeBanner: false,
-          title: '百战异闻录助手',
-          scrollBehavior: const _DesktopScrollBehavior(),
-          themeMode: store.themeMode,
-          theme: ThemeData(
-              useMaterial3: true,
-              scaffoldBackgroundColor: canvas,
-              colorScheme:
-                  ColorScheme.fromSeed(seedColor: teal, brightness: Brightness.light)
-                      .copyWith(
-                          primary: teal,
-                          onPrimary: Colors.white,
-                          primaryContainer: const Color(0xffe1f1ea),
-                          onPrimaryContainer: const Color(0xff245f4c),
-                          secondary: const Color(0xff69a991),
-                          secondaryContainer: const Color(0xffe8f3ee),
-                          tertiary: const Color(0xff8bb7a5),
-                          outline: const Color(0xffc5d5ce),
-                          outlineVariant: line,
-                          surface: Colors.white),
-              fontFamily: 'Arial',
-              textTheme: const TextTheme(
-                  headlineSmall: TextStyle(
-                      fontSize: 23,
-                      fontWeight: FontWeight.w700,
-                      color: ink,
-                      height: 1.2),
-                  titleLarge: TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.w700, color: ink),
-                  titleMedium: TextStyle(
-                      fontSize: 15, fontWeight: FontWeight.w600, color: ink),
-                  bodyLarge: TextStyle(fontSize: 14, color: ink),
-                  bodyMedium: TextStyle(fontSize: 13, color: ink),
-                  labelLarge: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-              inputDecorationTheme: InputDecorationTheme(filled: true, fillColor: const Color(0xfff7f9f8), isDense: true, labelStyle: const TextStyle(color: muted, fontSize: 12, fontWeight: FontWeight.w400), floatingLabelStyle: const TextStyle(color: teal, fontSize: 12, fontWeight: FontWeight.w400), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: line)), enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: line)), focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: teal, width: 1.2)), contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11)),
-              visualDensity: VisualDensity.compact,
-              dividerTheme: const DividerThemeData(color: line, space: 1, thickness: 1),
-              checkboxTheme: CheckboxThemeData(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)), side: const BorderSide(color: teal, width: 1.5), fillColor: WidgetStateProperty.resolveWith((states) => states.contains(WidgetState.selected) ? teal : Colors.transparent), checkColor: const WidgetStatePropertyAll<Color>(Colors.white)),
-              appBarTheme: const AppBarTheme(centerTitle: false, titleSpacing: 24, backgroundColor: Colors.white, surfaceTintColor: Colors.transparent),
-              navigationBarTheme: const NavigationBarThemeData(height: 62, labelTextStyle: WidgetStatePropertyAll(TextStyle(fontSize: 11, fontWeight: FontWeight.w600)), indicatorColor: Color(0xffe5f3ed)),
-              chipTheme: ChipThemeData(backgroundColor: const Color(0xfff7f9f8), side: const BorderSide(color: line), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: ink)),
-              popupMenuTheme: PopupMenuThemeData(color: const Color(0xf2f7fbf9), elevation: 0, shadowColor: Colors.transparent, surfaceTintColor: Colors.transparent, textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w400, color: ink), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: const BorderSide(color: line))),
-              dialogTheme: DialogThemeData(backgroundColor: const Color(0xf2f7fbf9), elevation: 0, surfaceTintColor: Colors.transparent, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: const BorderSide(color: line)), titleTextStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: ink), contentTextStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w400, color: ink)),
-              cardColor: Colors.white),
-          darkTheme: ThemeData(useMaterial3: true, brightness: Brightness.dark, scaffoldBackgroundColor: const Color(0xff121816), colorScheme: ColorScheme.fromSeed(seedColor: teal, brightness: Brightness.dark).copyWith(primary: const Color(0xff76c7a7)), fontFamily: 'Arial', visualDensity: VisualDensity.compact, inputDecorationTheme: InputDecorationTheme(filled: true, fillColor: const Color(0xff1c2521), isDense: true, border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11)), popupMenuTheme: const PopupMenuThemeData(elevation: 0, shadowColor: Colors.transparent, surfaceTintColor: Colors.transparent), navigationBarTheme: const NavigationBarThemeData(height: 62)),
-          home: Shell(store: store)));
+  State<BattleSkillsApp> createState() => _BattleSkillsAppState();
+}
+
+class _BattleSkillsAppState extends State<BattleSkillsApp> {
+  late ThemeMode _themeMode;
+
+  @override
+  void initState() {
+    super.initState();
+    _themeMode = widget.store.themeMode;
+    widget.store.addListener(_handleStoreChanged);
+  }
+
+  void _handleStoreChanged() {
+    if (!mounted || _themeMode == widget.store.themeMode) return;
+    setState(() => _themeMode = widget.store.themeMode);
+  }
+
+  @override
+  void dispose() {
+    widget.store.removeListener(_handleStoreChanged);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final store = widget.store;
+    return MaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: '百战异闻录助手',
+        scrollBehavior: const _DesktopScrollBehavior(),
+        themeMode: _themeMode,
+        theme: ThemeData(
+            useMaterial3: true,
+            scaffoldBackgroundColor: canvas,
+            colorScheme: ColorScheme.fromSeed(seedColor: teal, brightness: Brightness.light)
+                .copyWith(
+                    primary: teal,
+                    onPrimary: Colors.white,
+                    primaryContainer: const Color(0xffe1f1ea),
+                    onPrimaryContainer: const Color(0xff245f4c),
+                    secondary: const Color(0xff69a991),
+                    secondaryContainer: const Color(0xffe8f3ee),
+                    tertiary: const Color(0xff8bb7a5),
+                    outline: const Color(0xffc5d5ce),
+                    outlineVariant: line,
+                    surface: Colors.white),
+            fontFamily: 'Arial',
+            textTheme: const TextTheme(
+                headlineSmall: TextStyle(
+                    fontSize: 23,
+                    fontWeight: FontWeight.w700,
+                    color: ink,
+                    height: 1.2),
+                titleLarge: TextStyle(
+                    fontSize: 18, fontWeight: FontWeight.w700, color: ink),
+                titleMedium: TextStyle(
+                    fontSize: 15, fontWeight: FontWeight.w600, color: ink),
+                bodyLarge: TextStyle(fontSize: 14, color: ink),
+                bodyMedium: TextStyle(fontSize: 13, color: ink),
+                labelLarge:
+                    TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            inputDecorationTheme: InputDecorationTheme(
+                filled: true,
+                fillColor: const Color(0xfff7f9f8),
+                isDense: true,
+                labelStyle: const TextStyle(
+                    color: muted, fontSize: 12, fontWeight: FontWeight.w400),
+                floatingLabelStyle: const TextStyle(
+                    color: teal, fontSize: 12, fontWeight: FontWeight.w400),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: line)),
+                enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: line)),
+                focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: teal, width: 1.2)),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 11)),
+            visualDensity: VisualDensity.compact,
+            dividerTheme:
+                const DividerThemeData(color: line, space: 1, thickness: 1),
+            checkboxTheme:
+                CheckboxThemeData(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)), side: const BorderSide(color: teal, width: 1.5), fillColor: WidgetStateProperty.resolveWith((states) => states.contains(WidgetState.selected) ? teal : Colors.transparent), checkColor: const WidgetStatePropertyAll<Color>(Colors.white)),
+            appBarTheme: const AppBarTheme(centerTitle: false, titleSpacing: 24, backgroundColor: Colors.white, surfaceTintColor: Colors.transparent),
+            navigationBarTheme: const NavigationBarThemeData(height: 62, labelTextStyle: WidgetStatePropertyAll(TextStyle(fontSize: 11, fontWeight: FontWeight.w600)), indicatorColor: Color(0xffe5f3ed)),
+            chipTheme: ChipThemeData(backgroundColor: const Color(0xfff7f9f8), side: const BorderSide(color: line), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: ink)),
+            popupMenuTheme: PopupMenuThemeData(color: const Color(0xf2f7fbf9), elevation: 0, shadowColor: Colors.transparent, surfaceTintColor: Colors.transparent, textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w400, color: ink), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14), side: const BorderSide(color: line))),
+            dialogTheme: DialogThemeData(backgroundColor: const Color(0xf2f7fbf9), elevation: 0, surfaceTintColor: Colors.transparent, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: const BorderSide(color: line)), titleTextStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: ink), contentTextStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w400, color: ink)),
+            cardColor: Colors.white),
+        darkTheme: ThemeData(useMaterial3: true, brightness: Brightness.dark, scaffoldBackgroundColor: const Color(0xff121816), colorScheme: ColorScheme.fromSeed(seedColor: teal, brightness: Brightness.dark).copyWith(primary: const Color(0xff76c7a7)), fontFamily: 'Arial', visualDensity: VisualDensity.compact, inputDecorationTheme: InputDecorationTheme(filled: true, fillColor: const Color(0xff1c2521), isDense: true, border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)), contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11)), popupMenuTheme: const PopupMenuThemeData(elevation: 0, shadowColor: Colors.transparent, surfaceTintColor: Colors.transparent), navigationBarTheme: const NavigationBarThemeData(height: 62)),
+        home: AnimatedBuilder(animation: store, builder: (context, child) => Shell(store: store)));
+  }
 }
 
 class _DesktopScrollBehavior extends MaterialScrollBehavior {
@@ -2047,7 +2490,7 @@ class SideNav extends StatelessWidget {
               child: Row(children: [
                 Icon(Icons.auto_awesome, color: teal),
                 SizedBox(width: 10),
-                Text('百战异闻录助手',
+                Text('百战异闻录',
                     style: TextStyle(
                         color: ink, fontSize: 18, fontWeight: FontWeight.w700))
               ])),
@@ -2084,7 +2527,7 @@ class AppVersionText extends StatelessWidget {
       });
 }
 
-class NavItem extends StatelessWidget {
+class NavItem extends StatefulWidget {
   const NavItem(
       {required this.label,
       required this.icon,
@@ -2095,28 +2538,55 @@ class NavItem extends StatelessWidget {
   final IconData icon;
   final bool selected;
   final VoidCallback onTap;
+
+  @override
+  State<NavItem> createState() => _NavItemState();
+}
+
+class _NavItemState extends State<NavItem> {
+  bool _hovering = false;
+
   @override
   Widget build(BuildContext context) => Padding(
       padding: const EdgeInsets.only(bottom: 6),
-      child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: onTap,
-          child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
-              decoration: BoxDecoration(
-                  color:
-                      selected ? const Color(0xffe1f1ea) : Colors.transparent,
-                  borderRadius: BorderRadius.circular(6)),
-              child: Row(children: [
-                Icon(icon, size: 19, color: selected ? teal : muted),
-                const SizedBox(width: 12),
-                Text(label,
-                    style: TextStyle(
-                        color: selected ? teal : ink,
-                        fontWeight:
-                            selected ? FontWeight.w600 : FontWeight.w400))
-              ]))));
+      child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) => setState(() => _hovering = true),
+          onExit: (_) => setState(() => _hovering = false),
+          child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: widget.onTap,
+              splashColor: Colors.transparent,
+              highlightColor: Colors.transparent,
+              hoverColor: Colors.transparent,
+              focusColor: Colors.transparent,
+              child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
+                  decoration: BoxDecoration(
+                      color: widget.selected
+                          ? const Color(0xffe1f1ea)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: _hovering && !widget.selected
+                          ? const [
+                              BoxShadow(
+                                  color: Color(0x1c66736e),
+                                  blurRadius: 9,
+                                  offset: Offset(0, 2))
+                            ]
+                          : const []),
+                  child: Row(children: [
+                    Icon(widget.icon,
+                        size: 19, color: widget.selected ? teal : muted),
+                    const SizedBox(width: 12),
+                    Text(widget.label,
+                        style: TextStyle(
+                            color: widget.selected ? teal : ink,
+                            fontWeight: widget.selected
+                                ? FontWeight.w600
+                                : FontWeight.w400))
+                  ])))));
 }
 
 class TopBar extends StatelessWidget {
@@ -2193,26 +2663,112 @@ class CharacterPicker extends StatelessWidget {
           ])));
 }
 
-class PageBody extends StatelessWidget {
-  const PageBody({required this.child, super.key, this.title, this.action});
+class _PageHorizontalScrollScope extends InheritedWidget {
+  const _PageHorizontalScrollScope(
+      {required this.controller,
+      required this.viewportWidth,
+      required super.child});
+  final ScrollController controller;
+  final double viewportWidth;
+
+  static _PageHorizontalScrollScope? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_PageHorizontalScrollScope>();
+
+  @override
+  bool updateShouldNotify(_PageHorizontalScrollScope oldWidget) =>
+      controller != oldWidget.controller ||
+      viewportWidth != oldWidget.viewportWidth;
+}
+
+class _PageVerticalScrollScope extends InheritedWidget {
+  const _PageVerticalScrollScope(
+      {required this.controller, required super.child});
+  final ScrollController controller;
+
+  static _PageVerticalScrollScope? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_PageVerticalScrollScope>();
+
+  @override
+  bool updateShouldNotify(_PageVerticalScrollScope oldWidget) =>
+      controller != oldWidget.controller;
+}
+
+class PageBody extends StatefulWidget {
+  const PageBody(
+      {required this.child,
+      super.key,
+      this.title,
+      this.action,
+      this.horizontalScroll = false});
   final Widget child;
   final String? title;
   final Widget? action;
+  final bool horizontalScroll;
+
   @override
-  Widget build(BuildContext context) => SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(28, 24, 28, 34),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        if (title != null)
-          Row(children: [
-            Text(title!,
-                style: const TextStyle(
-                    fontSize: 17, fontWeight: FontWeight.w800, color: ink)),
-            const Spacer(),
-            if (action != null) action!
-          ]),
-        if (title != null) const SizedBox(height: 14),
-        child
-      ]));
+  State<PageBody> createState() => _PageBodyState();
+}
+
+class _PageBodyState extends State<PageBody> {
+  final horizontalController = ScrollController();
+  final verticalController = ScrollController();
+
+  @override
+  void dispose() {
+    horizontalController.dispose();
+    verticalController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget pageContent([double? width]) =>
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (widget.title != null)
+            SizedBox(
+                width: width,
+                child: Row(children: [
+                  Text(widget.title!,
+                      style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: ink)),
+                  const Spacer(),
+                  if (widget.action != null) widget.action!
+                ])),
+          if (widget.title != null) const SizedBox(height: 14),
+          widget.child
+        ]);
+
+    if (!widget.horizontalScroll) {
+      return SingleChildScrollView(
+          controller: verticalController,
+          clipBehavior: Clip.none,
+          padding: const EdgeInsets.fromLTRB(28, 24, 28, 34),
+          child: _PageVerticalScrollScope(
+              controller: verticalController, child: pageContent()));
+    }
+
+    return LayoutBuilder(builder: (context, constraints) {
+      final viewportWidth = constraints.maxWidth - 56;
+      return SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(28, 24, 28, 34),
+          child: _PageHorizontalScrollScope(
+              controller: horizontalController,
+              viewportWidth: viewportWidth,
+              child: Scrollbar(
+                  controller: horizontalController,
+                  thumbVisibility: true,
+                  notificationPredicate: (notification) =>
+                      notification.metrics.axis == Axis.horizontal,
+                  child: SingleChildScrollView(
+                      controller: horizontalController,
+                      scrollDirection: Axis.horizontal,
+                      child: ConstrainedBox(
+                          constraints: BoxConstraints(minWidth: viewportWidth),
+                          child: pageContent(viewportWidth))))));
+    });
+  }
 }
 
 double _filterItemWidth(double maxWidth, int itemCount) {
@@ -2259,6 +2815,21 @@ double _filterMenuWidth(BuildContext context,
       math.min(280.0, availableWidth), math.max(minimumWidth, contentWidth));
 }
 
+InputDecoration _filterSearchDecoration({
+  required String hintText,
+  Widget? suffixIcon,
+}) =>
+    InputDecoration(
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+        prefixIcon: const Icon(Icons.search, size: 17),
+        prefixIconConstraints: const BoxConstraints(minWidth: 34),
+        suffixIcon: suffixIcon,
+        suffixIconConstraints:
+            suffixIcon == null ? null : const BoxConstraints(minWidth: 34),
+        hintText: hintText,
+        hintStyle: const TextStyle(color: muted, fontSize: 12));
+
 Widget _equalCardRow(List<Widget> cards, double maxWidth) {
   return SizedBox(
       width: maxWidth,
@@ -2298,13 +2869,42 @@ class _FilterDropdownState<T> extends State<_FilterDropdown<T>> {
   final _layerLink = LayerLink();
   final _menuController = OverlayPortalController();
   final _searchController = TextEditingController();
+  final _searchFocusNode = FocusNode();
+  bool _hasActiveQuery = false;
+  bool _ignoreSearchChange = false;
   double _menuHeight = 0;
   double _menuWidth = 0;
   double _menuOffsetX = 0;
 
   @override
+  void initState() {
+    super.initState();
+    _syncSelectedText();
+  }
+
+  @override
+  void didUpdateWidget(covariant _FilterDropdown<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.searchable &&
+        oldWidget.value != widget.value &&
+        !_hasActiveQuery &&
+        !_searchFocusNode.hasFocus) {
+      _syncSelectedText();
+    }
+  }
+
+  void _syncSelectedText() {
+    if (!widget.searchable) return;
+    _ignoreSearchChange = true;
+    _searchController.clear();
+    _ignoreSearchChange = false;
+    _hasActiveQuery = false;
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -2334,10 +2934,7 @@ class _FilterDropdownState<T> extends State<_FilterDropdown<T>> {
           curve: Curves.easeOut);
       if (!mounted) return;
     }
-    _searchController.clear();
-    final searchHeight = widget.searchable ? 50.0 : 0.0;
-    _menuHeight = math.min(
-        math.min(widget.values.length * 44.0 + 12 + searchHeight, 300.0),
+    _menuHeight = math.min(math.min(widget.values.length * 44.0 + 12, 300.0),
         math.max(0.0, _spaceBelow()));
     if (_menuHeight < 1) return;
     _menuWidth = _filterMenuWidth(context,
@@ -2359,7 +2956,9 @@ class _FilterDropdownState<T> extends State<_FilterDropdown<T>> {
   }
 
   Widget _buildMenu(BuildContext context) {
-    final query = _searchController.text.trim().toLowerCase();
+    final query = widget.searchable && _hasActiveQuery
+        ? _searchController.text.trim().toLowerCase()
+        : '';
     final values = widget.values
         .where((item) =>
             query.isEmpty ||
@@ -2386,21 +2985,6 @@ class _FilterDropdownState<T> extends State<_FilterDropdown<T>> {
                       side: const BorderSide(color: Color(0xffd5e8df))),
                   clipBehavior: Clip.antiAlias,
                   child: Column(children: [
-                    if (widget.searchable)
-                      Padding(
-                          padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
-                          child: SizedBox(
-                              height: 40,
-                              child: TextField(
-                                  controller: _searchController,
-                                  autofocus: true,
-                                  onChanged: (_) => setState(() {}),
-                                  decoration: const InputDecoration(
-                                      isDense: true,
-                                      prefixIcon: Icon(Icons.search, size: 16),
-                                      prefixIconConstraints:
-                                          BoxConstraints(minWidth: 32),
-                                      hintText: '输入筛选')))),
                     Expanded(
                         child: values.isEmpty
                             ? const Center(
@@ -2416,6 +3000,12 @@ class _FilterDropdownState<T> extends State<_FilterDropdown<T>> {
                                   return InkWell(
                                       onTap: () {
                                         _closeMenu();
+                                        if (widget.searchable) {
+                                          _hasActiveQuery = false;
+                                          _ignoreSearchChange = true;
+                                          _searchController.clear();
+                                          _ignoreSearchChange = false;
+                                        }
                                         widget.onChanged(item);
                                       },
                                       child: SizedBox(
@@ -2462,28 +3052,65 @@ class _FilterDropdownState<T> extends State<_FilterDropdown<T>> {
             child: SizedBox(
                 width: widget.width,
                 height: 42,
-                child: InkWell(
-                    onTap: _toggleMenu,
-                    borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 11),
-                        decoration: BoxDecoration(
-                            color: const Color(0xfff9fdfb),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: const Color(0xffd5e8df))),
-                        child: Row(children: [
-                          Expanded(
-                              child: Text(selectedLabel,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      color: ink,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500))),
-                          const SizedBox(width: 5),
-                          const Icon(Icons.keyboard_arrow_down,
-                              size: 17, color: muted)
-                        ]))))));
+                child: widget.searchable
+                    ? TextField(
+                        controller: _searchController,
+                        focusNode: _searchFocusNode,
+                        style: const TextStyle(
+                            color: ink,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500),
+                        onTap: () {
+                          if (!_hasActiveQuery) {
+                            _searchController.selection = TextSelection(
+                                baseOffset: 0,
+                                extentOffset: _searchController.text.length);
+                          }
+                          if (!_menuController.isShowing) _toggleMenu();
+                        },
+                        onChanged: (_) {
+                          if (_ignoreSearchChange) return;
+                          _hasActiveQuery = true;
+                          if (!_menuController.isShowing) _toggleMenu();
+                          setState(() {});
+                        },
+                        decoration: _filterSearchDecoration(
+                            hintText: selectedLabel,
+                            suffixIcon: _hasActiveQuery
+                                ? IconButton(
+                                    tooltip: '清除',
+                                    padding: EdgeInsets.zero,
+                                    icon: const Icon(Icons.close, size: 15),
+                                    onPressed: _searchController.clear)
+                                : IconButton(
+                                    tooltip: '展开列表',
+                                    padding: EdgeInsets.zero,
+                                    icon: const Icon(Icons.keyboard_arrow_down,
+                                        size: 17),
+                                    onPressed: _toggleMenu)))
+                    : InkWell(
+                        onTap: _toggleMenu,
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 11),
+                            decoration: BoxDecoration(
+                                color: const Color(0xfff9fdfb),
+                                borderRadius: BorderRadius.circular(12),
+                                border:
+                                    Border.all(color: const Color(0xffd5e8df))),
+                            child: Row(children: [
+                              Expanded(
+                                  child: Text(selectedLabel,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                          color: ink,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w500))),
+                              const SizedBox(width: 5),
+                              const Icon(Icons.keyboard_arrow_down,
+                                  size: 17, color: muted)
+                            ]))))));
   }
 }
 
@@ -2629,15 +3256,8 @@ class _NameAutocompleteState extends State<_NameAutocomplete> {
                     style: const TextStyle(
                         color: ink, fontSize: 12, fontWeight: FontWeight.w500),
                     onSubmitted: (_) => onFieldSubmitted(),
-                    decoration: InputDecoration(
-                        isDense: true,
-                        contentPadding:
-                            const EdgeInsets.symmetric(horizontal: 10),
-                        prefixIcon: const Icon(Icons.search, size: 17),
-                        prefixIconConstraints:
-                            const BoxConstraints(minWidth: 34),
+                    decoration: _filterSearchDecoration(
                         hintText: compact ? widget.compactHint : widget.hint,
-                        hintStyle: const TextStyle(color: muted, fontSize: 12),
                         suffixIcon: textController.text.isEmpty
                             ? IconButton(
                                 tooltip: '展开技能列表',
@@ -2649,9 +3269,7 @@ class _NameAutocompleteState extends State<_NameAutocomplete> {
                                 tooltip: '清除',
                                 padding: EdgeInsets.zero,
                                 icon: const Icon(Icons.close, size: 15),
-                                onPressed: textController.clear),
-                        suffixIconConstraints:
-                            const BoxConstraints(minWidth: 34)))));
+                                onPressed: textController.clear)))));
   }
 }
 
@@ -2980,21 +3598,26 @@ class _HomePageState extends State<HomePage> {
         const SizedBox(width: 10),
         Expanded(
             child: Text(
-                store.newerRemoteBackup != null
-                    ? '发现较新的云端备份，请先恢复后再同步'
-                    : store.lastSyncAt == null
-                        ? (store.syncConfig?.isValid == true
-                            ? '尚未同步'
-                            : '未配置 WebDAV')
-                        : '上次成功 ${store.lastSyncAt!.toLocal().toString().substring(0, 16)}',
+                store.hasSyncConflict
+                    ? '本地和云端都有未同步修改，请处理冲突'
+                    : store.newerRemoteBackup != null
+                        ? '发现较新的云端备份，请先恢复后再同步'
+                        : store.lastSyncAt == null
+                            ? (store.syncConfig?.isValid == true
+                                ? '尚未同步'
+                                : '未配置 WebDAV')
+                            : '上次成功 ${store.lastSyncAt!.toLocal().toString().substring(0, 16)}',
                 style: const TextStyle(color: ink, fontSize: 12))),
         if (store.newerRemoteBackup != null)
           IconButton(
-              tooltip: '恢复较新的云端备份',
+              tooltip: store.hasSyncConflict ? '处理同步冲突' : '恢复较新的云端备份',
               onPressed: store.restoreBusy
                   ? null
-                  : () => confirmRemoteBackupRestore(
-                      context, store, store.newerRemoteBackup!),
+                  : () => store.hasSyncConflict
+                      ? resolveSyncConflict(
+                          context, store, store.newerRemoteBackup!)
+                      : confirmRemoteBackupRestore(
+                          context, store, store.newerRemoteBackup!),
               icon: const Icon(Icons.cloud_download_outlined, color: gold)),
         IconButton(
             tooltip: '立即同步',
@@ -3318,6 +3941,7 @@ class CharacterSwitcher extends StatefulWidget {
 
 class _CharacterSwitcherState extends State<CharacterSwitcher> {
   final ScrollController _controller = ScrollController();
+  String? _lastScrollTarget;
 
   @override
   void dispose() {
@@ -3339,10 +3963,51 @@ class _CharacterSwitcherState extends State<CharacterSwitcher> {
     });
   }
 
+  double _characterWidth(BuildContext context, CharacterData character) {
+    final minds = schoolMindPositions[character.school];
+    final characterLabel =
+        minds?.length == 1 ? character.school : character.mind;
+    final subtitle = '$characterLabel · ${character.swapPoints}';
+    return math.max(
+        166.0,
+        math.max(
+                _singleLineTextWidth(context, character.name,
+                    const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+                _singleLineTextWidth(
+                    context, subtitle, const TextStyle(fontSize: 10))) +
+            70);
+  }
+
+  void _ensureSelectedCharacterVisible(
+      BuildContext context, List<CharacterData> characters) {
+    final selectedId = widget.store.selectedCharacterId;
+    final selectedIndex =
+        characters.indexWhere((character) => character.id == selectedId);
+    if (selectedId.isEmpty || selectedIndex < 0) {
+      return;
+    }
+    final target = '$selectedId|${characters.map((item) => item.id).join(',')}';
+    if (_lastScrollTarget == target) return;
+    _lastScrollTarget = target;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_controller.hasClients) return;
+      var targetStart = 0.0;
+      for (var index = 0; index < selectedIndex; index++) {
+        targetStart += _characterWidth(context, characters[index]) + 10;
+      }
+      final targetCenter =
+          targetStart + _characterWidth(context, characters[selectedIndex]) / 2;
+      final offset = targetCenter - _controller.position.viewportDimension / 2;
+      _controller.jumpTo(offset.clamp(_controller.position.minScrollExtent,
+          _controller.position.maxScrollExtent));
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final visibleCharacters =
         widget.characters ?? widget.store.activeCharacters;
+    _ensureSelectedCharacterVisible(context, visibleCharacters);
     return Listener(
         onPointerSignal: _handlePointerSignal,
         child: SizedBox(
@@ -3383,18 +4048,7 @@ class _CharacterSwitcherState extends State<CharacterSwitcher> {
                   final characterLabel =
                       minds?.length == 1 ? character.school : character.mind;
                   final subtitle = '$characterLabel · ${character.swapPoints}';
-                  final characterWidth = math.max(
-                      166.0,
-                      math.max(
-                              _singleLineTextWidth(
-                                  context,
-                                  character.name,
-                                  const TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w700)),
-                              _singleLineTextWidth(context, subtitle,
-                                  const TextStyle(fontSize: 10))) +
-                          70);
+                  final characterWidth = _characterWidth(context, character);
                   return InkWell(
                       onTap: () {
                         widget.store.selectCharacter(character.id);
@@ -3467,7 +4121,8 @@ class CharacterManagementPage extends StatelessWidget {
               label: const Text('添加角色'))
         ]),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('按角色管理独立的技能重数记录，长按卡片可拖动排序，点击编辑图标进入编辑；打叉后不会出现在其他页面。',
+          const Text(
+              '按角色管理独立的技能重数记录，按住卡片或左侧拖动把手可调整顺序，点击编辑图标编辑角色；右上角启用/禁用按钮可控制角色是否出现在其他页面。',
               style: TextStyle(color: muted, fontSize: 12)),
           const SizedBox(height: 18),
           if (store.characters.isEmpty)
@@ -3493,164 +4148,219 @@ class CharacterManagementPage extends StatelessWidget {
                   final spirit = store.stat(character.id, true);
                   final stamina = store.stat(character.id, false);
                   return DragTarget<String>(
-                      onWillAcceptWithDetails: (details) =>
-                          details.data != character.id,
+                      onWillAcceptWithDetails: (details) {
+                        final dragged = store.characters
+                            .firstWhere((item) => item.id == details.data);
+                        return details.data != character.id &&
+                            dragged.archived == character.archived;
+                      },
                       onAcceptWithDetails: (details) =>
                           store.reorderCharacter(details.data, character.id),
-                      builder: (context, candidates, rejected) => LongPressDraggable<
-                              String>(
-                          data: character.id,
-                          feedback: Material(
-                              color: Colors.transparent,
+                      builder: (context, candidates, rejected) =>
+                          LongPressDraggable<String>(
+                              data: character.id,
+                              delay: const Duration(milliseconds: 300),
+                              rootOverlay: true,
+                              feedback: Material(
+                                  color: Colors.transparent,
+                                  child: Container(
+                                      width: 260,
+                                      padding: const EdgeInsets.all(16),
+                                      decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          border: Border.all(color: teal),
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          boxShadow: const [
+                                            BoxShadow(
+                                                color: Color(0x22000000),
+                                                blurRadius: 12,
+                                                offset: Offset(0, 5))
+                                          ]),
+                                      child: Row(children: [
+                                        const Icon(Icons.drag_indicator,
+                                            color: teal),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                            child: Text(character.name,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(
+                                                    color: ink,
+                                                    fontWeight:
+                                                        FontWeight.w700)))
+                                      ]))),
                               child: Container(
-                                  width: 260,
-                                  padding: const EdgeInsets.all(16),
+                                  padding: const EdgeInsets.all(18),
                                   decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      border: Border.all(color: teal),
-                                      borderRadius: BorderRadius.circular(10),
-                                      boxShadow: const [
-                                        BoxShadow(
-                                            color: Color(0x22000000),
-                                            blurRadius: 12,
-                                            offset: Offset(0, 5))
-                                      ]),
-                                  child: Row(children: [
-                                    const Icon(Icons.drag_indicator,
-                                        color: teal),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                        child: Text(character.name,
+                                      color: candidates.isNotEmpty
+                                          ? const Color(0xffe8f3ee)
+                                          : character.archived
+                                              ? const Color(0xfff4f7f5)
+                                              : Colors.white,
+                                      border: Border.all(
+                                          color: candidates.isNotEmpty
+                                              ? teal
+                                              : character.archived
+                                                  ? const Color(0xffd5dfda)
+                                                  : line),
+                                      borderRadius: BorderRadius.circular(10)),
+                                  child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(children: [
+                                          Tooltip(
+                                              message: '按住此处拖动调整顺序',
+                                              child: Draggable<String>(
+                                                  data: character.id,
+                                                  rootOverlay: true,
+                                                  feedback: Material(
+                                                      color: Colors.transparent,
+                                                      child: Container(
+                                                          padding: const EdgeInsets.symmetric(
+                                                              horizontal: 10,
+                                                              vertical: 8),
+                                                          decoration: BoxDecoration(
+                                                              color: Colors.white,
+                                                              border: Border.all(color: teal),
+                                                              borderRadius: BorderRadius.circular(8),
+                                                              boxShadow: const [
+                                                                BoxShadow(
+                                                                    color: Color(
+                                                                        0x22000000),
+                                                                    blurRadius:
+                                                                        10,
+                                                                    offset:
+                                                                        Offset(
+                                                                            0,
+                                                                            4))
+                                                              ]),
+                                                          child: Row(
+                                                              mainAxisSize:
+                                                                  MainAxisSize
+                                                                      .min,
+                                                              children: [
+                                                                const Icon(
+                                                                    Icons
+                                                                        .drag_indicator,
+                                                                    color:
+                                                                        teal),
+                                                                const SizedBox(
+                                                                    width: 6),
+                                                                Text(
+                                                                    character
+                                                                        .name,
+                                                                    style: const TextStyle(
+                                                                        color:
+                                                                            ink,
+                                                                        fontWeight:
+                                                                            FontWeight.w700))
+                                                              ]))),
+                                                  childWhenDragging: const Padding(
+                                                      padding: EdgeInsets.only(
+                                                          right: 8),
+                                                      child: Icon(Icons.drag_indicator,
+                                                          color: teal)),
+                                                  child: const Padding(
+                                                      padding: EdgeInsets.only(right: 8),
+                                                      child: Icon(Icons.drag_indicator, color: muted)))),
+                                          MindAvatar(
+                                              character: character, radius: 23),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                              child: Text(character.name,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                      color: ink,
+                                                      fontSize: 18,
+                                                      fontWeight:
+                                                          FontWeight.w700))),
+                                          Tooltip(
+                                              message: character.archived
+                                                  ? '已禁用，点击启用'
+                                                  : '已启用，点击禁用',
+                                              child: Listener(
+                                                  behavior:
+                                                      HitTestBehavior.opaque,
+                                                  onPointerUp: (_) => store
+                                                      .setCharacterArchived(
+                                                          character,
+                                                          !character.archived),
+                                                  child: Container(
+                                                      width: 28,
+                                                      height: 28,
+                                                      margin:
+                                                          const EdgeInsets.only(
+                                                              right: 2),
+                                                      decoration: BoxDecoration(
+                                                          color: character.archived
+                                                              ? const Color(
+                                                                  0xfff3e9e7)
+                                                              : const Color(
+                                                                  0xffe2f3eb),
+                                                          borderRadius:
+                                                              BorderRadius.circular(8),
+                                                          border: Border.all(color: character.archived ? const Color(0xffd5aaa2) : const Color(0xffacd7c4))),
+                                                      child: Icon(character.archived ? Icons.toggle_off_rounded : Icons.toggle_on_rounded, size: 19, color: character.archived ? const Color(0xffa96d65) : teal)))),
+                                          Tooltip(
+                                              message: '编辑角色',
+                                              child: Listener(
+                                                  behavior:
+                                                      HitTestBehavior.opaque,
+                                                  onPointerUp: (_) =>
+                                                      showCharacterDialog(
+                                                          context, store,
+                                                          character: character),
+                                                  child: const Padding(
+                                                      padding:
+                                                          EdgeInsets.all(6),
+                                                      child: Icon(
+                                                          Icons.edit_outlined,
+                                                          color: muted,
+                                                          size: 20))))
+                                        ]),
+                                        const SizedBox(height: 14),
+                                        Text(
+                                            '${character.school} · ${character.mind} · ${character.position} · 换将点 ${character.swapPoints}',
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                             style: const TextStyle(
-                                                color: ink,
-                                                fontWeight: FontWeight.w700)))
-                                  ]))),
-                          child: Container(
-                              padding: const EdgeInsets.all(18),
-                              decoration: BoxDecoration(
-                                  color: character.archived
-                                      ? const Color(0xfff4f7f5)
-                                      : Colors.white,
-                                  border: Border.all(
-                                      color: character.archived
-                                          ? const Color(0xffd5dfda)
-                                          : line),
-                                  borderRadius: BorderRadius.circular(10)),
-                              child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(children: [
-                                      const Tooltip(
-                                          message: '长按角色卡片拖动调整顺序',
-                                          child: Padding(
-                                              padding:
-                                                  EdgeInsets.only(right: 8),
-                                              child: Icon(Icons.drag_indicator,
-                                                  color: muted))),
-                                      MindAvatar(
-                                          character: character, radius: 23),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                          child: Text(character.name,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
+                                                color: muted, fontSize: 13)),
+                                        const SizedBox(height: 8),
+                                        ClipRRect(
+                                            borderRadius:
+                                                BorderRadius.circular(5),
+                                            child: LinearProgressIndicator(
+                                                value: progress.clamp(0, 1),
+                                                minHeight: 7,
+                                                backgroundColor:
+                                                    const Color(0xffe2e9e5),
+                                                color: character.archived
+                                                    ? muted
+                                                    : teal)),
+                                        const SizedBox(height: 8),
+                                        Row(children: [
+                                          Text('精神 ${formatNumber(spirit)}',
                                               style: const TextStyle(
                                                   color: ink,
-                                                  fontSize: 18,
-                                                  fontWeight:
-                                                      FontWeight.w700))),
-                                      Tooltip(
-                                          message: character.archived
-                                              ? '已禁用，点击启用'
-                                              : '已启用，点击禁用',
-                                          child: Listener(
-                                              behavior: HitTestBehavior.opaque,
-                                              onPointerUp: (_) =>
-                                                  store.setCharacterArchived(
-                                                      character,
-                                                      !character.archived),
-                                              child: Container(
-                                                  width: 28,
-                                                  height: 28,
-                                                  margin: const EdgeInsets.only(
-                                                      right: 2),
-                                                  decoration: BoxDecoration(
-                                                      color: character.archived
-                                                          ? const Color(
-                                                              0xfff3e9e7)
-                                                          : const Color(
-                                                              0xffe2f3eb),
-                                                      borderRadius:
-                                                          BorderRadius.circular(
-                                                              8),
-                                                      border: Border.all(color: character.archived ? const Color(0xffd5aaa2) : const Color(0xffacd7c4))),
-                                                  child: Icon(character.archived ? Icons.toggle_off_rounded : Icons.toggle_on_rounded, size: 19, color: character.archived ? const Color(0xffa96d65) : teal)))),
-                                      Tooltip(
-                                          message: '编辑角色',
-                                          child: Listener(
-                                              behavior: HitTestBehavior.opaque,
-                                              onPointerUp: (_) =>
-                                                  showCharacterDialog(
-                                                      context, store,
-                                                      character: character),
-                                              child: const Padding(
-                                                  padding: EdgeInsets.all(6),
-                                                  child: Icon(
-                                                      Icons.edit_outlined,
-                                                      color: muted,
-                                                      size: 20))))
-                                    ]),
-                                    const SizedBox(height: 14),
-                                    Text(
-                                        '${character.school} · ${character.mind} · ${character.position} · 换将点 ${character.swapPoints}',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                            color: muted, fontSize: 13)),
-                                    const SizedBox(height: 8),
-                                    ClipRRect(
-                                        borderRadius: BorderRadius.circular(5),
-                                        child: LinearProgressIndicator(
-                                            value: progress.clamp(0, 1),
-                                            minHeight: 7,
-                                            backgroundColor:
-                                                const Color(0xffe2e9e5),
-                                            color: character.archived
-                                                ? muted
-                                                : teal)),
-                                    const SizedBox(height: 8),
-                                    Row(children: [
-                                      Text('精神 ${formatNumber(spirit)}',
-                                          style: const TextStyle(
-                                              color: ink,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w600)),
-                                      const Spacer(),
-                                      Text('耐力 ${formatNumber(stamina)}',
-                                          style: const TextStyle(
-                                              color: ink,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w600))
-                                    ]),
-                                    const Spacer(),
-                                    Row(children: [
-                                      Text(
-                                          '${(progress * 100).round()}% 技能重数进度',
-                                          style: const TextStyle(
-                                              color: muted, fontSize: 12)),
-                                      const Spacer(),
-                                      Text(
-                                          character.archived ? '已禁用' : '双击编辑角色',
-                                          style: TextStyle(
-                                              color: character.archived
-                                                  ? muted
-                                                  : teal,
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w700))
-                                    ])
-                                  ]))));
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600)),
+                                          const Spacer(),
+                                          Text('耐力 ${formatNumber(stamina)}',
+                                              style: const TextStyle(
+                                                  color: ink,
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600))
+                                        ]),
+                                        const Spacer(),
+                                        Text(
+                                            '${(progress * 100).round()}% 技能重数进度',
+                                            style: const TextStyle(
+                                                color: muted, fontSize: 12))
+                                      ]))));
                 })
         ]));
   }
@@ -3980,25 +4690,34 @@ class SkillMatrix extends StatefulWidget {
       this.accent = ink,
       this.characters,
       this.onDeleteSkill,
+      this.horizontalController,
+      this.viewportWidth,
+      this.contentWidth,
       super.key});
   final SkillStore store;
   final List<String> skillNames;
   final Color accent;
   final List<CharacterData>? characters;
   final ValueChanged<String>? onDeleteSkill;
+  final ScrollController? horizontalController;
+  final double? viewportWidth;
+  final double? contentWidth;
 
   @override
   State<SkillMatrix> createState() => _SkillMatrixState();
 }
 
 class _SkillMatrixState extends State<SkillMatrix> {
-  final horizontalController = ScrollController();
-  final verticalController = ScrollController();
+  final _internalHorizontalController = ScrollController();
+
+  ScrollController get horizontalController =>
+      widget.horizontalController ?? _internalHorizontalController;
 
   @override
   void dispose() {
-    horizontalController.dispose();
-    verticalController.dispose();
+    if (widget.horizontalController == null) {
+      _internalHorizontalController.dispose();
+    }
     super.dispose();
   }
 
@@ -4011,17 +4730,19 @@ class _SkillMatrixState extends State<SkillMatrix> {
           child: const Text('暂无技能记录', style: TextStyle(color: muted)));
     }
     return LayoutBuilder(builder: (context, constraints) {
-      final skillColumnWidth = constraints.maxWidth < 600 ? 142.0 : 184.0;
-      final characterColumnWidth = constraints.maxWidth < 600 ? 88.0 : 104.0;
+      final layoutWidth = widget.viewportWidth ?? constraints.maxWidth;
+      final skillColumnWidth = layoutWidth < 600 ? 142.0 : 184.0;
+      final characterColumnWidth = layoutWidth < 600 ? 88.0 : 104.0;
       final visibleCharacterWidth =
-          math.max(0.0, constraints.maxWidth - skillColumnWidth);
+          math.max(0.0, layoutWidth - skillColumnWidth);
       final characterTableWidth = math.max(
           visibleCharacterWidth, characters.length * characterColumnWidth);
-      final headerHeight = constraints.maxWidth < 600 ? 42.0 : 46.0;
-      final rowHeight = constraints.maxWidth < 600 ? 46.0 : 50.0;
-      final matrixHeight = math.min(
-          560.0, math.max(280.0, MediaQuery.sizeOf(context).height * 0.62));
+      final tableWidth = math.max(
+          widget.contentWidth ?? 0.0, skillColumnWidth + characterTableWidth);
+      final headerHeight = layoutWidth < 600 ? 42.0 : 46.0;
+      final rowHeight = layoutWidth < 600 ? 46.0 : 50.0;
       final skillContentHeight = widget.skillNames.length * rowHeight;
+      final matrixHeight = headerHeight + skillContentHeight;
 
       String displaySkillLabel(String name) {
         final skill = store.findSkill(name);
@@ -4051,12 +4772,23 @@ class _SkillMatrixState extends State<SkillMatrix> {
                 if (!header &&
                     skillName != null &&
                     widget.onDeleteSkill != null)
-                  IconButton(
-                      tooltip: '移除重要技能',
-                      visualDensity: VisualDensity.compact,
-                      iconSize: 17,
-                      onPressed: () => widget.onDeleteSkill!(skillName),
-                      icon: const Icon(Icons.close, color: muted))
+                  Tooltip(
+                      message: '移除重要技能',
+                      child: Material(
+                          color: const Color(0xfffff3f1),
+                          borderRadius: BorderRadius.circular(7),
+                          child: InkWell(
+                              onTap: () => widget.onDeleteSkill!(skillName),
+                              borderRadius: BorderRadius.circular(7),
+                              child: Container(
+                                  width: 28,
+                                  height: 28,
+                                  decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(7),
+                                      border: Border.all(
+                                          color: const Color(0xffedc9c3))),
+                                  child: const Icon(Icons.remove_circle_outline,
+                                      size: 17, color: Colors.redAccent)))))
               ]));
 
       Widget characterHeader(CharacterData character) => _SkillMatrixCell(
@@ -4102,71 +4834,58 @@ class _SkillMatrixState extends State<SkillMatrix> {
                       .toList()))
               .toList());
 
-      return CardShell(
-          padding: EdgeInsets.zero,
-          child: SizedBox(
-              height: matrixHeight,
-              child: Column(children: [
-                // Keep the column titles visible while the skill rows scroll.
-                Row(children: [
-                  skillCell('技能名称', header: true),
-                  Expanded(
-                      child: ClipRect(
-                          child: AnimatedBuilder(
-                              animation: horizontalController,
-                              builder: (context, child) => Transform.translate(
-                                  offset: Offset(
-                                      -(horizontalController.hasClients
-                                          ? horizontalController.offset
-                                          : 0.0),
-                                      0),
-                                  child: child),
+      return SizedBox(
+          width: tableWidth,
+          child: CardShell(
+              padding: EdgeInsets.zero,
+              child: SizedBox(
+                  width: tableWidth,
+                  height: matrixHeight,
+                  child: AnimatedBuilder(
+                      animation: horizontalController,
+                      builder: (context, child) {
+                        final horizontalOffset = horizontalController.hasClients
+                            ? horizontalController.offset
+                            : 0.0;
+                        return Stack(clipBehavior: Clip.hardEdge, children: [
+                          // The right side is the actual horizontally
+                          // moving table content.
+                          Positioned(
+                              left: skillColumnWidth,
+                              top: 0,
+                              width: characterTableWidth,
+                              height: headerHeight,
                               child: SizedBox(
                                   width: characterTableWidth,
-                                  child: headerCharacters))))
-                ]),
-                Expanded(
-                    child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                      SizedBox(
-                          width: skillColumnWidth,
-                          child: ClipRect(
-                              child: AnimatedBuilder(
-                                  animation: verticalController,
-                                  builder: (context, child) =>
-                                      Transform.translate(
-                                          offset: Offset(
-                                              0,
-                                              -(verticalController.hasClients
-                                                  ? verticalController.offset
-                                                  : 0.0)),
-                                          child: child),
-                                  child: SizedBox(
-                                      height: skillContentHeight,
-                                      child: skillRows)))),
-                      Expanded(
-                          child: Scrollbar(
-                              controller: verticalController,
-                              thumbVisibility: true,
-                              notificationPredicate: (notification) =>
-                                  notification.metrics.axis == Axis.vertical,
-                              child: Scrollbar(
-                                  controller: horizontalController,
-                                  thumbVisibility: true,
-                                  notificationPredicate: (notification) =>
-                                      notification.metrics.axis ==
-                                      Axis.horizontal,
-                                  child: SingleChildScrollView(
-                                      controller: horizontalController,
-                                      scrollDirection: Axis.horizontal,
-                                      child: SizedBox(
-                                          width: characterTableWidth,
-                                          child: SingleChildScrollView(
-                                              controller: verticalController,
-                                              child: characterRows))))))
-                    ]))
-              ])));
+                                  child: headerCharacters)),
+                          Positioned(
+                              left: skillColumnWidth,
+                              top: headerHeight,
+                              width: characterTableWidth,
+                              height: skillContentHeight,
+                              child: SizedBox(
+                                  width: characterTableWidth,
+                                  child: characterRows)),
+                          // Translate the left column back by the
+                          // outer horizontal offset so it stays pinned
+                          // while the right side scrolls underneath it.
+                          Positioned(
+                              left: horizontalOffset,
+                              top: 0,
+                              width: skillColumnWidth,
+                              height: headerHeight,
+                              child: skillCell('技能名称', header: true)),
+                          Positioned(
+                              left: horizontalOffset,
+                              top: headerHeight,
+                              width: skillColumnWidth,
+                              height: skillContentHeight,
+                              child: SizedBox(
+                                  width: skillColumnWidth,
+                                  height: skillContentHeight,
+                                  child: skillRows))
+                        ]);
+                      }))));
     });
   }
 }
@@ -4215,8 +4934,15 @@ class SkillSummaryFilters extends StatefulWidget {
 
 class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
   final skillQuery = TextEditingController();
+  final horizontalController = ScrollController();
+  final _rootKey = GlobalKey();
+  final _matrixKey = GlobalKey();
   String characterId = 'all';
   int maxRank = 0;
+  ScrollController? _verticalController;
+  double _rootInitialTop = 0;
+  double _matrixStart = double.infinity;
+  double _matrixHeight = 0;
 
   @override
   void initState() {
@@ -4231,9 +4957,51 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
   void _onSkillQueryChanged() => setState(() {});
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final controller = _PageVerticalScrollScope.maybeOf(context)?.controller;
+    if (controller == _verticalController) return;
+    _verticalController?.removeListener(_scheduleMatrixMeasurement);
+    _verticalController = controller;
+    _verticalController?.addListener(_scheduleMatrixMeasurement);
+    _scheduleMatrixMeasurement();
+  }
+
+  void _scheduleMatrixMeasurement() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final root = _rootKey.currentContext?.findRenderObject() as RenderBox?;
+      final matrix =
+          _matrixKey.currentContext?.findRenderObject() as RenderBox?;
+      if (root == null || matrix == null || !root.hasSize || !matrix.hasSize) {
+        return;
+      }
+      final rootTop = root.localToGlobal(Offset.zero).dy;
+      final matrixTop = matrix.localToGlobal(Offset.zero).dy;
+      final nextStart = matrixTop - rootTop;
+      final nextHeight = matrix.size.height;
+      final scrollOffset = _verticalController?.hasClients == true
+          ? _verticalController!.offset
+          : 0.0;
+      final nextRootInitialTop = rootTop + scrollOffset;
+      if ((_rootInitialTop - nextRootInitialTop).abs() > .5 ||
+          (_matrixStart - nextStart).abs() > .5 ||
+          (_matrixHeight - nextHeight).abs() > .5) {
+        setState(() {
+          _rootInitialTop = nextRootInitialTop;
+          _matrixStart = nextStart;
+          _matrixHeight = nextHeight;
+        });
+      }
+    });
+  }
+
+  @override
   void dispose() {
     skillQuery.removeListener(_onSkillQueryChanged);
     skillQuery.dispose();
+    _verticalController?.removeListener(_scheduleMatrixMeasurement);
+    horizontalController.dispose();
     super.dispose();
   }
 
@@ -4261,72 +5029,204 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
     }).toList();
   }
 
+  Widget _stickyHeader({
+    required List<CharacterData> characters,
+    required double viewportWidth,
+    required double skillColumnWidth,
+    required double characterColumnWidth,
+    required double headerHeight,
+  }) {
+    final characterTableWidth = math.max(
+        math.max(0.0, viewportWidth - skillColumnWidth),
+        characters.length * characterColumnWidth);
+    final characterHeaders = characters
+        .map((character) => _SkillMatrixCell(
+            width: characterColumnWidth,
+            height: headerHeight,
+            header: true,
+            alignment: Alignment.center,
+            child: Text(character.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    color: muted, fontSize: 12, fontWeight: FontWeight.w700))))
+        .toList();
+    final leftHeader = _SkillMatrixCell(
+        width: skillColumnWidth,
+        height: headerHeight,
+        header: true,
+        alignment: Alignment.centerLeft,
+        child: const Text('技能名称',
+            style: TextStyle(
+                color: muted, fontSize: 12, fontWeight: FontWeight.w700)));
+    return Material(
+        color: Colors.white,
+        elevation: 3,
+        shadowColor: const Color(0x22000000),
+        child: SizedBox(
+            width: viewportWidth,
+            height: headerHeight,
+            child: AnimatedBuilder(
+                animation: horizontalController,
+                builder: (context, child) {
+                  final offset = horizontalController.hasClients
+                      ? horizontalController.offset
+                      : 0.0;
+                  return Stack(clipBehavior: Clip.hardEdge, children: [
+                    Positioned(
+                        left: skillColumnWidth - offset,
+                        top: 0,
+                        width: characterTableWidth,
+                        height: headerHeight,
+                        child: Row(children: characterHeaders)),
+                    Positioned(
+                        left: 0,
+                        top: 0,
+                        width: skillColumnWidth,
+                        height: headerHeight,
+                        child: leftHeader)
+                  ]);
+                })));
+  }
+
   @override
   Widget build(BuildContext context) {
     final characters = filteredCharacters;
     final skills = filteredSkills;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      LayoutBuilder(builder: (context, constraints) {
-        final width = _filterItemWidth(constraints.maxWidth, 3);
-        return Wrap(spacing: 10, runSpacing: 10, children: [
-          _FilterDropdown<String>(
-              value: effectiveCharacterId,
-              values: [
-                'all',
-                ...widget.store.activeCharacters.map((item) => item.id)
-              ],
-              itemLabel: (value) => value == 'all'
-                  ? '全部角色'
-                  : widget.store.activeCharacters
-                      .firstWhere((item) => item.id == value)
-                      .name,
-              compactLabel: (value) => value == 'all'
-                  ? '角色'
-                  : widget.store.activeCharacters
-                      .firstWhere((item) => item.id == value)
-                      .name,
-              width: width,
-              searchable: true,
-              onChanged: (value) =>
-                  setState(() => characterId = value ?? 'all')),
-          _NameAutocomplete(
-              controller: skillQuery,
-              names: widget.skillNames,
-              width: width,
-              hint: '技能名称',
-              compactHint: '技能'),
-          _FilterDropdown<int>(
-              value: maxRank,
-              values: [
-                0,
-                ...List.generate(widget.store.maxSkillRank,
-                    (index) => widget.store.maxSkillRank - index)
-              ],
-              itemLabel: (value) => value == 0 ? '全部重数' : '$value 重及以下',
-              compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
-              width: width,
-              onChanged: (value) => setState(() => maxRank = value ?? maxRank))
-        ]);
-      }),
-      const SizedBox(height: 10),
-      Text('技能 ${skills.length} 个 · 角色 ${characters.length} 个',
-          style: TextStyle(
-              color: widget.accent, fontSize: 12, fontWeight: FontWeight.w600)),
-      const SizedBox(height: 12),
-      if (characters.isEmpty)
-        const CardShell(
-            child: Text('没有符合条件的角色', style: TextStyle(color: muted)))
-      else if (skills.isEmpty)
-        const CardShell(
-            child: Text('没有符合条件的技能', style: TextStyle(color: muted)))
-      else
-        SkillMatrix(
-            store: widget.store,
-            skillNames: skills,
-            accent: widget.accent,
-            characters: characters,
-            onDeleteSkill: widget.onDeleteSkill)
-    ]);
+    return LayoutBuilder(builder: (context, constraints) {
+      final viewportWidth = constraints.maxWidth;
+      final skillColumnWidth = viewportWidth < 600 ? 142.0 : 184.0;
+      final characterColumnWidth = viewportWidth < 600 ? 88.0 : 104.0;
+      final characterTableWidth = math.max(
+          math.max(0.0, viewportWidth - skillColumnWidth),
+          characters.length * characterColumnWidth);
+      final matrixWidth = skillColumnWidth + characterTableWidth;
+      final filterControls = SizedBox(
+          width: viewportWidth,
+          child: LayoutBuilder(builder: (context, constraints) {
+            final width = _filterItemWidth(constraints.maxWidth, 3);
+            return Wrap(spacing: 10, runSpacing: 10, children: [
+              _FilterDropdown<String>(
+                  value: effectiveCharacterId,
+                  values: [
+                    'all',
+                    ...widget.store.activeCharacters.map((item) => item.id)
+                  ],
+                  itemLabel: (value) => value == 'all'
+                      ? '全部角色'
+                      : widget.store.activeCharacters
+                          .firstWhere((item) => item.id == value)
+                          .name,
+                  compactLabel: (value) => value == 'all'
+                      ? '角色'
+                      : widget.store.activeCharacters
+                          .firstWhere((item) => item.id == value)
+                          .name,
+                  width: width,
+                  searchable: true,
+                  onChanged: (value) =>
+                      setState(() => characterId = value ?? 'all')),
+              _NameAutocomplete(
+                  controller: skillQuery,
+                  names: widget.skillNames,
+                  width: width,
+                  hint: '技能名称',
+                  compactHint: '技能'),
+              _FilterDropdown<int>(
+                  value: maxRank,
+                  values: [
+                    0,
+                    ...List.generate(widget.store.maxSkillRank,
+                        (index) => widget.store.maxSkillRank - index)
+                  ],
+                  itemLabel: (value) => value == 0 ? '全部重数' : '$value 重及以下',
+                  compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
+                  width: width,
+                  onChanged: (value) =>
+                      setState(() => maxRank = value ?? maxRank))
+            ]);
+          }));
+
+      Widget matrix = characters.isEmpty
+          ? SizedBox(
+              width: viewportWidth,
+              child: const CardShell(
+                  child: Text('没有符合条件的角色', style: TextStyle(color: muted))))
+          : skills.isEmpty
+              ? SizedBox(
+                  width: viewportWidth,
+                  child: const CardShell(
+                      child: Text('没有符合条件的技能', style: TextStyle(color: muted))))
+              : Scrollbar(
+                  controller: horizontalController,
+                  thumbVisibility: true,
+                  notificationPredicate: (notification) =>
+                      notification.metrics.axis == Axis.horizontal,
+                  child: SingleChildScrollView(
+                      controller: horizontalController,
+                      scrollDirection: Axis.horizontal,
+                      child: SizedBox(
+                          width: matrixWidth,
+                          child: SkillMatrix(
+                              store: widget.store,
+                              skillNames: skills,
+                              accent: widget.accent,
+                              characters: characters,
+                              onDeleteSkill: widget.onDeleteSkill,
+                              horizontalController: horizontalController,
+                              viewportWidth: viewportWidth,
+                              contentWidth: matrixWidth))));
+
+      _scheduleMatrixMeasurement();
+      final verticalController = _verticalController;
+      final headerHeight = viewportWidth < 600 ? 42.0 : 46.0;
+      return Stack(key: _rootKey, clipBehavior: Clip.none, children: [
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          filterControls,
+          const SizedBox(height: 10),
+          SizedBox(
+              width: viewportWidth,
+              child: Text('技能 ${skills.length} 个 · 角色 ${characters.length} 个',
+                  style: TextStyle(
+                      color: widget.accent,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600))),
+          const SizedBox(height: 12),
+          KeyedSubtree(key: _matrixKey, child: matrix)
+        ]),
+        if (verticalController != null &&
+            characters.isNotEmpty &&
+            skills.isNotEmpty)
+          Positioned.fill(
+              child: IgnorePointer(
+                  child: AnimatedBuilder(
+                      animation: verticalController,
+                      builder: (context, child) {
+                        final offset = verticalController.hasClients
+                            ? verticalController.offset
+                            : 0.0;
+                        final stickyStart = _rootInitialTop + _matrixStart;
+                        final visible = _matrixStart.isFinite &&
+                            offset >= stickyStart &&
+                            offset < stickyStart + _matrixHeight - headerHeight;
+                        return Stack(clipBehavior: Clip.none, children: [
+                          if (visible)
+                            Positioned(
+                                left: 0,
+                                top: offset - _rootInitialTop,
+                                width: viewportWidth,
+                                height: headerHeight,
+                                child: _stickyHeader(
+                                    characters: characters,
+                                    viewportWidth: viewportWidth,
+                                    skillColumnWidth: skillColumnWidth,
+                                    characterColumnWidth: characterColumnWidth,
+                                    headerHeight: headerHeight))
+                        ]);
+                      })))
+      ]);
+    });
   }
 }
 
@@ -4376,10 +5276,10 @@ class PurplePage extends StatelessWidget {
           Padding(
               padding: const EdgeInsets.only(bottom: 14),
               child: CardShell(
-                  child: Row(children: [
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
                 const Icon(Icons.auto_awesome, color: purple),
                 const SizedBox(width: 10),
-                const Expanded(
+                const Flexible(
                     child: Text('可交易技能以紫色标识，点击重数即可修改并同步角色记录。',
                         style: TextStyle(color: muted, fontSize: 12))),
                 Text(
@@ -4430,6 +5330,25 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
 
   List<CharacterData> get characters => widget.store.activeCharacters;
 
+  int _defaultBulkSkillRank() {
+    final targets = effectiveCharacterId == 'all'
+        ? characters
+        : characters.where((character) => character.id == effectiveCharacterId);
+    final levels = <int>[];
+    for (final character in targets) {
+      for (final boss in widget.store.bosses) {
+        for (final skill in boss.skills) {
+          if (skillAppliesToGender(skill, character.gender)) {
+            final level = widget.store.level(character.id, skill.id);
+            if (level > 0) levels.add(level);
+          }
+        }
+      }
+    }
+    if (levels.isEmpty) return 1;
+    return levels.reduce(math.min).clamp(1, widget.store.maxSkillRank).toInt();
+  }
+
   String get effectiveCharacterId =>
       characters.any((character) => character.id == characterId)
           ? characterId
@@ -4450,7 +5369,7 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
   }
 
   Future<void> _setAllRanks() async {
-    var selectedRank = 1;
+    var selectedRank = _defaultBulkSkillRank();
     final confirmed = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => StatefulBuilder(
@@ -4490,22 +5409,29 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
         ? null
         : characters.firstWhere((item) => item.id == effectiveCharacterId,
             orElse: () => characters.first);
+    final visibleBosses = filteredBosses;
     return PageBody(
         title: '所有技能汇总',
-        action: Text('${filteredBosses.length} 个首领',
+        action: Text('${visibleBosses.length} 个首领',
             style: const TextStyle(color: teal, fontWeight: FontWeight.w600)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           CharacterSwitcher(
               store: widget.store,
               onSelected: (value) => setState(() => characterId = value)),
           const SizedBox(height: 10),
-          Align(
-              alignment: Alignment.centerRight,
-              child: OutlinedButton.icon(
-                  onPressed: characters.isEmpty ? null : _setAllRanks,
-                  icon: const Icon(Icons.layers_outlined, size: 17),
-                  label: Text(
-                      characterId == 'all' ? '设置全部角色技能重数' : '设置当前角色全部技能重数'))),
+          LayoutBuilder(builder: (context, constraints) {
+            final width = _filterItemWidth(constraints.maxWidth, 2);
+            return Align(
+                alignment: Alignment.centerRight,
+                child: SizedBox(
+                    width: width,
+                    child: OutlinedButton.icon(
+                        onPressed: characters.isEmpty ? null : _setAllRanks,
+                        icon: const Icon(Icons.layers_outlined, size: 17),
+                        label: Text(characterId == 'all'
+                            ? '设置全部角色技能重数'
+                            : '设置当前角色全部技能重数'))));
+          }),
           const SizedBox(height: 12),
           LayoutBuilder(builder: (context, constraints) {
             final width = _filterItemWidth(constraints.maxWidth, 2);
@@ -4533,16 +5459,16 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
           Text(
               character == null
                   ? '切换角色后可按首领和技能重数筛选。'
-                  : '当前角色：${character.name} · 符合条件的首领：${filteredBosses.length} 个',
+                  : '当前角色：${character.name} · 符合条件的首领：${visibleBosses.length} 个',
               style: const TextStyle(color: muted, fontSize: 12)),
           const SizedBox(height: 14),
-          if (filteredBosses.isEmpty)
+          if (visibleBosses.isEmpty)
             const CardShell(
                 child: Text('没有符合条件的首领', style: TextStyle(color: muted)))
           else
             _AllSkillsTable(
                 store: widget.store,
-                bosses: filteredBosses,
+                bosses: visibleBosses,
                 character: character,
                 onChanged: () => setState(() {}))
         ]));
@@ -5055,9 +5981,12 @@ class _MaxSkillRankDialogState extends State<_MaxSkillRankDialog> {
     }
   }
 
-  int get editableFrom => previewMaxRank > widget.initialValue
-      ? widget.initialValue + 1
-      : widget.initialEditableFrom;
+  int get editableFrom {
+    final nextRangeStart = previewMaxRank > widget.initialValue
+        ? widget.initialValue + 1
+        : widget.initialEditableFrom;
+    return math.max(minimumEditableRankFor(previewMaxRank), nextRangeStart);
+  }
 
   String _formatNumber(double value) =>
       value == value.roundToDouble() ? '${value.toInt()}' : '$value';
@@ -5688,15 +6617,26 @@ class _SyncBackupPageState extends State<SyncBackupPage> {
                       color: gold, size: 20),
                   const SizedBox(width: 9),
                   Expanded(
-                      child: Text('发现较新的云端备份：${store.newerRemoteBackup!.name}',
+                      child: Text(
+                          store.hasSyncConflict
+                              ? '本地和云端都有修改：${store.newerRemoteBackup!.name}'
+                              : '发现较新的云端备份：${store.newerRemoteBackup!.name}',
                           style: const TextStyle(
                               color: ink, fontWeight: FontWeight.w600))),
-                  TextButton(
-                      onPressed: store.restoreBusy
-                          ? null
-                          : () => confirmRemoteBackupRestore(
-                              context, store, store.newerRemoteBackup!),
-                      child: const Text('恢复'))
+                  if (store.hasSyncConflict) ...[
+                    TextButton(
+                        onPressed: store.syncBusy || store.restoreBusy
+                            ? null
+                            : () => resolveSyncConflict(
+                                context, store, store.newerRemoteBackup!),
+                        child: const Text('处理冲突'))
+                  ] else
+                    TextButton(
+                        onPressed: store.restoreBusy
+                            ? null
+                            : () => confirmRemoteBackupRestore(
+                                context, store, store.newerRemoteBackup!),
+                        child: const Text('恢复'))
                 ])),
             const SizedBox(height: 10)
           ],
@@ -5985,6 +6925,84 @@ class _BackupVersionBadge extends StatelessWidget {
                 color: emphasized
                     ? scheme.onPrimaryContainer
                     : scheme.onSurfaceVariant)));
+  }
+}
+
+Future<void> resolveSyncConflict(
+    BuildContext context, SkillStore store, RemoteBackup backup) async {
+  var choice = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+            title: const Text('同步冲突'),
+            content: Text(
+                '检测到本地和云端都在“${backup.name}”之前发生了修改。\n\n自动合并：合并双方互不冲突的修改；同一项同时修改时会列出冲突。\n保留本地：将当前本地数据上传为新版本，云端旧版本仍会保留在历史备份中。\n使用云端：用云端版本替换当前本地数据。'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('取消')),
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, 'merge'),
+                  child: const Text('自动合并')),
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, 'remote'),
+                  child: const Text('使用云端')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, 'local'),
+                  child: const Text('保留本地并上传'))
+            ],
+          ));
+  if (!context.mounted || choice == null) return;
+  if (choice == 'merge') {
+    final result = await store.mergeRemoteChanges(backup);
+    if (result.merged) {
+      if (context.mounted && store.syncMessage != null) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(store.syncMessage!)));
+      }
+      return;
+    }
+    if (!context.mounted) return;
+    if (result.conflicts.isNotEmpty) {
+      final conflictLabels = result.conflicts
+          .map(store.describeSyncConflict)
+          .toSet()
+          .take(8)
+          .join('\n');
+      choice = await showDialog<String>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+                title: const Text('无法自动合并'),
+                content: Text(
+                    '以下 ${result.conflicts.length} 项在本地和云端都被修改：\n\n$conflictLabels${result.conflicts.length > 8 ? '\n……' : ''}'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(dialogContext),
+                      child: const Text('取消')),
+                  TextButton(
+                      onPressed: () => Navigator.pop(dialogContext, 'remote'),
+                      child: const Text('使用云端')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(dialogContext, 'local'),
+                      child: const Text('保留本地并上传'))
+                ],
+              ));
+      if (!context.mounted || choice == null) return;
+    } else {
+      if (context.mounted && store.syncMessage != null) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(store.syncMessage!)));
+      }
+      return;
+    }
+  }
+  if (choice == 'local') {
+    await store.syncNow(overwriteRemoteConflict: true);
+  } else if (choice == 'remote') {
+    await store.restoreRemoteBackup(backup);
+  }
+  if (context.mounted && store.syncMessage != null) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(store.syncMessage!)));
   }
 }
 

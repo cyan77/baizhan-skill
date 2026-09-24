@@ -27,6 +27,12 @@ const defaultThreeSkillBonuses = <int, double>{
   10: 14000,
 };
 
+/// The first ten ranks are the rules from the current version and are always
+/// read-only.  For catalogs whose maximum is below ten, the first rank after
+/// the maximum remains the natural "nothing editable yet" boundary.
+int minimumEditableRankFor(int maxSkillRank) =>
+    maxSkillRank < 10 ? maxSkillRank + 1 : 11;
+
 class BossStatRules {
   BossStatRules({
     required Map<int, double> rankMultipliers,
@@ -76,7 +82,9 @@ class BossStatRules {
       }
       threeSkillBonuses.putIfAbsent(rank, () => 0);
     }
-    editableFromRank = editableFromRank.clamp(1, maxSkillRank + 1).toInt();
+    editableFromRank = editableFromRank
+        .clamp(minimumEditableRankFor(maxSkillRank), maxSkillRank + 1)
+        .toInt();
   }
 
   BossStatRules copy() => BossStatRules(
