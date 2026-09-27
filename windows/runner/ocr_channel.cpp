@@ -58,12 +58,33 @@ EncodableList RecognizeText(const std::string& path) {
   const auto decoder =
       winrt::Windows::Graphics::Imaging::BitmapDecoder::CreateAsync(stream)
           .get();
-  const auto bitmap = decoder.GetSoftwareBitmapAsync(
-      winrt::Windows::Graphics::Imaging::BitmapPixelFormat::Bgra8,
-      winrt::Windows::Graphics::Imaging::BitmapAlphaMode::Premultiplied).get();
-
+  const auto source_width = decoder.PixelWidth();
+  const auto source_height = decoder.PixelHeight();
   const auto max_dimension =
       winrt::Windows::Media::Ocr::OcrEngine::MaxImageDimension();
+  if (source_width > max_dimension || source_height > max_dimension) {
+    throw std::runtime_error("图片尺寸过大，无法进行文字识别");
+  }
+  auto transform = winrt::Windows::Graphics::Imaging::BitmapTransform();
+  if (source_width < 900 && source_width > 0 && source_height > 0) {
+    const double scale = std::min(900.0 / source_width,
+        std::min(2400.0 / std::max(source_width, source_height),
+                 static_cast<double>(max_dimension) /
+                     std::max(source_width, source_height)));
+    if (scale > 1.05) {
+      transform.ScaledWidth(static_cast<uint32_t>(std::round(source_width * scale)));
+      transform.ScaledHeight(static_cast<uint32_t>(std::round(source_height * scale)));
+      transform.InterpolationMode(
+          winrt::Windows::Graphics::Imaging::BitmapInterpolationMode::Cubic);
+    }
+  }
+  const auto bitmap = decoder.GetSoftwareBitmapAsync(
+      winrt::Windows::Graphics::Imaging::BitmapPixelFormat::Bgra8,
+      winrt::Windows::Graphics::Imaging::BitmapAlphaMode::Premultiplied,
+      transform,
+      winrt::Windows::Graphics::Imaging::ExifOrientationMode::RespectExifOrientation,
+      winrt::Windows::Graphics::Imaging::ColorManagementMode::DoNotColorManage).get();
+
   if (static_cast<uint32_t>(bitmap.PixelWidth()) > max_dimension ||
       static_cast<uint32_t>(bitmap.PixelHeight()) > max_dimension) {
     throw std::runtime_error("图片尺寸过大，无法进行文字识别");

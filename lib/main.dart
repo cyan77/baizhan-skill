@@ -8176,7 +8176,8 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                                                   store,
                                                   importedLevels,
                                                   initialSkillLevel,
-                                                  gender);
+                                                  gender,
+                                                  recognizedFromImage: levels.length);
                                             }
                                           } catch (error) {
                                             if (context.mounted) {
@@ -8337,12 +8338,9 @@ Future<Map<String, int>?> pickCharacterImageLevels(
   if (imageSize > 25 * 1024 * 1024) {
     throw const FormatException('图片文件过大，请选择小于 25 MB 的截图');
   }
-  // Keep large Windows screenshots on the native decoder: decoding those in
-  // Dart can exhaust memory. Small, narrow PNG screenshots benefit from the
-  // same enlargement used by macOS before reading tiny Chinese characters.
-  final prepareWindowsImage = Platform.isWindows && imageSize <= 5 * 1024 * 1024 &&
-      await _isSmallNarrowPng(path);
-  if (Platform.isMacOS || prepareWindowsImage) {
+  // Windows enlarges narrow screenshots during native decoding, avoiding a
+  // temporary file that Windows OCR could not open on some installations.
+  if (Platform.isMacOS) {
     try {
       final prepared = await Isolate.run(() => _prepareOcrImage(path));
       if (prepared != null) {
@@ -8387,26 +8385,6 @@ Future<Map<String, int>?> pickCharacterImageLevels(
     }
   }
   return parseCharacterImageOcr(raw, store, gender);
-}
-
-Future<bool> _isSmallNarrowPng(String path) async {
-  final file = await File(path).open();
-  try {
-    final header = await file.read(24);
-    if (header.length < 24 ||
-        header[0] != 137 || header[1] != 80 || header[2] != 78 ||
-        header[3] != 71 || header[4] != 13 || header[5] != 10 ||
-        header[6] != 26 || header[7] != 10) return false;
-    int dimension(int offset) => (header[offset] << 24) |
-        (header[offset + 1] << 16) | (header[offset + 2] << 8) |
-        header[offset + 3];
-    final width = dimension(16);
-    final height = dimension(20);
-    return width > 0 && width < 900 && height > 0 &&
-        width * height <= 3000000;
-  } finally {
-    await file.close();
-  }
 }
 
 String? _prepareOcrImage(String path) {
@@ -8507,7 +8485,8 @@ Map<String, int> parseCharacterImageOcr(
 }
 
 Future<void> showCharacterDraftPreview(BuildContext context, SkillStore store,
-    Map<String, int> overrides, int defaultLevel, String gender) async {
+    Map<String, int> overrides, int defaultLevel, String gender,
+    {int? recognizedFromImage}) async {
   bool? strategyDescending;
   final expandedBossIds = <String>{};
   await showDialog<void>(
@@ -8598,6 +8577,15 @@ Future<void> showCharacterDraftPreview(BuildContext context, SkillStore store,
                                 icon: Icons.shield_outlined))
                       ]),
                       const SizedBox(height: 12),
+                      if (recognizedFromImage != null) ...[
+                        Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                                '图片识别匹配 $recognizedFromImage 项技能；未匹配的技能仍使用默认重数，请在保存前检查。',
+                                style: const TextStyle(
+                                    color: muted, fontSize: 12))),
+                        const SizedBox(height: 12),
+                      ],
                       Expanded(
                           child: LayoutBuilder(
                               builder: (context, constraints) =>
