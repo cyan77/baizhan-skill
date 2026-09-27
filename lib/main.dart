@@ -8355,13 +8355,30 @@ Future<Map<String, int>?> pickCharacterImageLevels(
   }
   const channel = MethodChannel('baizhan_skill/ocr');
   final List<dynamic> raw;
-  try {
-    raw = await channel.invokeListMethod<dynamic>('recognizeText', {
-          'path': ocrPath
-        }).timeout(const Duration(seconds: 45),
+  Future<List<dynamic>> recognize(String imagePath) async {
+    if (!await File(imagePath).exists()) {
+      throw FormatException('识别图片不存在：$imagePath');
+    }
+    return await channel.invokeListMethod<dynamic>(
+          'recognizeText', {'path': File(imagePath).absolute.path}
+        ).timeout(const Duration(seconds: 45),
             onTimeout: () => throw const FormatException(
                 '图片识别超时，请裁剪图片后重试，并确认系统已安装简体中文 OCR')) ??
         const [];
+  }
+  Future<List<dynamic>> recognizeWithFallback() async {
+    if (ocrPath == path) return recognize(path);
+    try {
+      return await recognize(ocrPath);
+    } on PlatformException {
+      // Some Windows installations cannot open the generated temporary PNG.
+      return recognize(path);
+    } on FormatException {
+      return recognize(path);
+    }
+  }
+  try {
+    raw = await recognizeWithFallback();
   } finally {
     if (temporaryDirectory != null) {
       try {
