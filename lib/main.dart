@@ -595,6 +595,17 @@ class SkillStore extends ChangeNotifier {
   Map<String, String> navigationLabels = {};
   String? pendingSkillPageCharacterId;
   int? pendingSkillPageMaxRank;
+  final Map<int, ({String characterId, int maxRank, String query})>
+      skillPageFilters = {};
+  final Map<int, Set<String>> skillPageResults = {};
+  int? temporarySkillPage;
+  final Set<int> discardSkillFiltersOnDispose = {};
+  String homeCdFilter = '全部';
+  String homeSchoolFilter = '全部';
+  String homePositionFilter = '全部';
+  String characterSearch = '';
+  String characterGenderFilter = '全部';
+  String characterSchoolFilter = '全部';
   static const storageKey = 'battle_skill_data_v3';
   static const selectedCharacterIdKey = 'selected_character_id';
   static const pageKey = 'selected_page';
@@ -1560,8 +1571,13 @@ class SkillStore extends ChangeNotifier {
     selectedCharacterId = activeCharacters.firstOrNull?.id ?? '';
   }
 
-  void setPage(int value) {
+  void setPage(int value, {bool fromHome = false}) {
     if (page == value) return;
+    if (page == temporarySkillPage) {
+      discardSkillFiltersOnDispose.add(page);
+      temporarySkillPage = null;
+    }
+    if (!fromHome && value == temporarySkillPage) temporarySkillPage = null;
     page = value;
     _saveNavigationState();
     notifyListeners();
@@ -1582,9 +1598,12 @@ class SkillStore extends ChangeNotifier {
   }
 
   void openSkillPage(int targetPage, String characterId) {
+    skillPageFilters.remove(targetPage);
+    skillPageResults.remove(targetPage);
+    temporarySkillPage = targetPage;
     pendingSkillPageCharacterId = characterId;
     pendingSkillPageMaxRank = math.max(1, maxSkillRank - 1);
-    setPage(targetPage);
+    setPage(targetPage, fromHome: true);
   }
 
   void setMaxSkillRank(int value) {
@@ -3366,7 +3385,18 @@ class _CharacterFilterPanelState extends State<CharacterFilterPanel> {
   String school = '全部';
 
   @override
+  void initState() {
+    super.initState();
+    query.text = widget.store.characterSearch;
+    gender = widget.store.characterGenderFilter;
+    school = widget.store.characterSchoolFilter;
+  }
+
+  @override
   void dispose() {
+    widget.store.characterSearch = query.text;
+    widget.store.characterGenderFilter = gender;
+    widget.store.characterSchoolFilter = school;
     query.dispose();
     super.dispose();
   }
@@ -3510,6 +3540,22 @@ class _HomePageState extends State<HomePage> {
   String positionFilter = '全部';
 
   SkillStore get store => widget.store;
+
+  @override
+  void initState() {
+    super.initState();
+    cdFilter = store.homeCdFilter;
+    schoolFilter = store.homeSchoolFilter;
+    positionFilter = store.homePositionFilter;
+  }
+
+  @override
+  void dispose() {
+    store.homeCdFilter = cdFilter;
+    store.homeSchoolFilter = schoolFilter;
+    store.homePositionFilter = positionFilter;
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3733,6 +3779,7 @@ class ExistingSkillsPanel extends StatefulWidget {
 class _ExistingSkillsPanelState extends State<ExistingSkillsPanel> {
   final bossQuery = TextEditingController();
   int maxRank = 0;
+  Set<String>? visibleSkillIds;
 
   @override
   void initState() {
@@ -3740,7 +3787,13 @@ class _ExistingSkillsPanelState extends State<ExistingSkillsPanel> {
     bossQuery.addListener(_onBossQueryChanged);
   }
 
-  void _onBossQueryChanged() => setState(() {});
+  @override
+  void didUpdateWidget(covariant ExistingSkillsPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.character.id != widget.character.id) visibleSkillIds = null;
+  }
+
+  void _onBossQueryChanged() => setState(() => visibleSkillIds = null);
 
   @override
   void dispose() {
@@ -3753,6 +3806,7 @@ class _ExistingSkillsPanelState extends State<ExistingSkillsPanel> {
   CharacterData get character => widget.character;
 
   bool _matches(Skill skill) {
+    if (visibleSkillIds case final ids?) return ids.contains(skill.id);
     if (!skillAppliesToGender(skill, character.gender)) return false;
     final level = store.level(character.id, skill.id);
     return maxRank == 0 ? level > 0 : level > 0 && level <= maxRank;
@@ -3769,6 +3823,13 @@ class _ExistingSkillsPanelState extends State<ExistingSkillsPanel> {
 
   @override
   Widget build(BuildContext context) {
+    visibleSkillIds ??= {
+      for (final boss in store.bosses)
+        if (bossQuery.text.trim().isEmpty ||
+            boss.name.toLowerCase().contains(bossQuery.text.trim().toLowerCase()))
+          for (final skill in boss.skills)
+            if (_matches(skill)) skill.id
+    };
     final bosses = visibleBosses;
     final filteredSkillCount = bosses.fold<int>(
         0, (count, boss) => count + boss.skills.where(_matches).length);
@@ -3803,8 +3864,10 @@ class _ExistingSkillsPanelState extends State<ExistingSkillsPanel> {
                   itemLabel: (value) => value == 0 ? '全部重数' : '$value 重及以下',
                   compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
                   width: width,
-                  onChanged: (value) =>
-                      setState(() => maxRank = value ?? maxRank))
+                  onChanged: (value) => setState(() {
+                    maxRank = value ?? maxRank;
+                    visibleSkillIds = null;
+                  }))
             ]);
           }),
           const SizedBox(height: 6),
@@ -4899,17 +4962,42 @@ class _SkillMatrixState extends State<SkillMatrix> {
                           alignment: Alignment.center,
                           child: SizedBox.expand(
                               child: Tooltip(
-                                  message: '点击修改重数',
+                                  message: '点击重数修改，或用右侧箭头调整',
                                   child: InkWell(
                                       onTap: () => showSkillRankDialog(
                                           context, store, character, skillName,
                                           displayName:
                                               displaySkillLabel(skillName)),
-                                      child: Center(
-                                          child: RankBadge(
-                                              rank: store.skillLevelForName(
-                                                  character.id, skillName),
-                                              plain: true)))))))
+                                      child: Row(children: [
+                                        Expanded(child: Center(child: RankBadge(
+                                            rank: store.skillLevelForName(
+                                                character.id, skillName),
+                                            plain: true))),
+                                        Column(mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                          _RankStepButton(
+                                              icon: Icons.keyboard_arrow_up,
+                                              tooltip: '增加一重',
+                                              onPressed: store.skillLevelForName(
+                                                          character.id, skillName) <
+                                                      store.maxSkillRank
+                                                  ? () => store.setLevelForSkillName(
+                                                      character.id, skillName,
+                                                      store.skillLevelForName(
+                                                              character.id, skillName) + 1)
+                                                  : null),
+                                          _RankStepButton(
+                                              icon: Icons.keyboard_arrow_down,
+                                              tooltip: '减少一重',
+                                              onPressed: store.skillLevelForName(
+                                                          character.id, skillName) > 0
+                                                  ? () => store.setLevelForSkillName(
+                                                      character.id, skillName,
+                                                      store.skillLevelForName(
+                                                              character.id, skillName) - 1)
+                                                  : null)
+                                        ])
+                                      ]))))))
                       .toList()))
               .toList());
 
@@ -4998,11 +5086,13 @@ class _SkillMatrixCell extends StatelessWidget {
 class SkillSummaryFilters extends StatefulWidget {
   const SkillSummaryFilters(
       {required this.store,
+      required this.pageId,
       required this.skillNames,
       required this.accent,
       this.onDeleteSkill,
       super.key});
   final SkillStore store;
+  final int pageId;
   final List<String> skillNames;
   final Color accent;
   final ValueChanged<String>? onDeleteSkill;
@@ -5026,14 +5116,18 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
   @override
   void initState() {
     super.initState();
+    final saved = widget.store.skillPageFilters[widget.pageId];
+    characterId = widget.store.pendingSkillPageCharacterId ?? saved?.characterId ?? 'all';
+    maxRank = widget.store.pendingSkillPageMaxRank ?? saved?.maxRank ?? 0;
+    skillQuery.text = saved?.query ?? '';
     skillQuery.addListener(_onSkillQueryChanged);
-    characterId = widget.store.pendingSkillPageCharacterId ?? 'all';
-    maxRank = widget.store.pendingSkillPageMaxRank ?? 0;
     widget.store.pendingSkillPageCharacterId = null;
     widget.store.pendingSkillPageMaxRank = null;
   }
 
-  void _onSkillQueryChanged() => setState(() {});
+  void _onSkillQueryChanged() => setState(() {
+        widget.store.skillPageResults.remove(widget.pageId);
+      });
 
   @override
   void didChangeDependencies() {
@@ -5077,6 +5171,10 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
 
   @override
   void dispose() {
+    if (!widget.store.discardSkillFiltersOnDispose.remove(widget.pageId)) {
+      widget.store.skillPageFilters[widget.pageId] =
+          (characterId: characterId, maxRank: maxRank, query: skillQuery.text);
+    }
     skillQuery.removeListener(_onSkillQueryChanged);
     skillQuery.dispose();
     _verticalController?.removeListener(_scheduleMatrixMeasurement);
@@ -5095,9 +5193,13 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
       .toList();
 
   List<String> get filteredSkills {
+    final cached = widget.store.skillPageResults[widget.pageId];
+    if (cached != null) {
+      return widget.skillNames.where(cached.contains).toList();
+    }
     final query = skillQuery.text.trim().toLowerCase();
     final characters = filteredCharacters;
-    return widget.skillNames.where((name) {
+    final result = widget.skillNames.where((name) {
       final matchesRank = maxRank == 0 ||
           characters.any((character) {
             final rank = widget.store.skillLevelForName(character.id, name);
@@ -5106,6 +5208,8 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
       return (query.isEmpty || name.toLowerCase().contains(query)) &&
           matchesRank;
     }).toList();
+    widget.store.skillPageResults[widget.pageId] = result.toSet();
+    return result;
   }
 
   Widget _stickyHeader({
@@ -5204,8 +5308,10 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
                           .name,
                   width: width,
                   searchable: true,
-                  onChanged: (value) =>
-                      setState(() => characterId = value ?? 'all')),
+                  onChanged: (value) => setState(() {
+                    characterId = value ?? 'all';
+                    widget.store.skillPageResults.remove(widget.pageId);
+                  })),
               _NameAutocomplete(
                   controller: skillQuery,
                   names: widget.skillNames,
@@ -5222,8 +5328,10 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
                   itemLabel: (value) => value == 0 ? '全部重数' : '$value 重及以下',
                   compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
                   width: width,
-                  onChanged: (value) =>
-                      setState(() => maxRank = value ?? maxRank))
+                  onChanged: (value) => setState(() {
+                    maxRank = value ?? maxRank;
+                    widget.store.skillPageResults.remove(widget.pageId);
+                  }))
             ]);
           }));
 
@@ -5327,6 +5435,7 @@ class ImportantPage extends StatelessWidget {
                 style: TextStyle(color: muted, fontSize: 12))),
         SkillSummaryFilters(
             store: store,
+            pageId: 1,
             skillNames: store.importantSkills,
             accent: ink,
             onDeleteSkill: (name) =>
@@ -5367,7 +5476,7 @@ class PurplePage extends StatelessWidget {
                         color: purple, fontWeight: FontWeight.w700))
               ]))),
           SkillSummaryFilters(
-              store: store, skillNames: store.purpleSkills, accent: purple)
+              store: store, pageId: 2, skillNames: store.purpleSkills, accent: purple)
         ]));
   }
 }
@@ -5388,20 +5497,28 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
   @override
   void initState() {
     super.initState();
-    bossQuery.addListener(_onBossQueryChanged);
+    final saved = widget.store.skillPageFilters[3];
     characterId = widget.store.pendingSkillPageCharacterId ??
-        (widget.store.selectedCharacterId.isNotEmpty
+        saved?.characterId ?? (widget.store.selectedCharacterId.isNotEmpty
             ? widget.store.selectedCharacterId
             : 'all');
-    maxRank = widget.store.pendingSkillPageMaxRank ?? 0;
+    maxRank = widget.store.pendingSkillPageMaxRank ?? saved?.maxRank ?? 0;
+    bossQuery.text = saved?.query ?? '';
+    bossQuery.addListener(_onBossQueryChanged);
     widget.store.pendingSkillPageCharacterId = null;
     widget.store.pendingSkillPageMaxRank = null;
   }
 
-  void _onBossQueryChanged() => setState(() {});
+  void _onBossQueryChanged() => setState(() {
+        widget.store.skillPageResults.remove(3);
+      });
 
   @override
   void dispose() {
+    if (!widget.store.discardSkillFiltersOnDispose.remove(3)) {
+      widget.store.skillPageFilters[3] =
+          (characterId: characterId, maxRank: maxRank, query: bossQuery.text);
+    }
     bossQuery.removeListener(_onBossQueryChanged);
     bossQuery.dispose();
     super.dispose();
@@ -5434,17 +5551,23 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
           : 'all';
 
   List<Boss> get filteredBosses {
+    final cached = widget.store.skillPageResults[3];
+    if (cached != null) {
+      return widget.store.bosses.where((boss) => cached.contains(boss.id)).toList();
+    }
     final query = bossQuery.text.trim().toLowerCase();
     final character = effectiveCharacterId == 'all' || characters.isEmpty
         ? null
         : characters.firstWhere((item) => item.id == effectiveCharacterId,
             orElse: () => characters.first);
-    return widget.store.bosses.where((boss) {
+    final result = widget.store.bosses.where((boss) {
       final rank =
           character == null ? 0 : widget.store.rankFor(character.id, boss);
       return (query.isEmpty || boss.name.toLowerCase().contains(query)) &&
           (maxRank == 0 || (rank > 0 && rank <= maxRank));
     }).toList();
+    widget.store.skillPageResults[3] = result.map((boss) => boss.id).toSet();
+    return result;
   }
 
   Future<void> _setAllRanks() async {
@@ -5496,7 +5619,10 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           CharacterSwitcher(
               store: widget.store,
-              onSelected: (value) => setState(() => characterId = value)),
+              onSelected: (value) => setState(() {
+                characterId = value;
+                widget.store.skillPageResults.remove(3);
+              })),
           const SizedBox(height: 10),
           LayoutBuilder(builder: (context, constraints) {
             final width = _filterItemWidth(constraints.maxWidth, 2);
@@ -5531,7 +5657,10 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
                   itemLabel: (value) => value == 0 ? '全部重数' : '$value 重及以下',
                   compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
                   width: width,
-                  onChanged: (value) => setState(() => maxRank = value ?? 0))
+                  onChanged: (value) => setState(() {
+                    maxRank = value ?? 0;
+                    widget.store.skillPageResults.remove(3);
+                  }))
             ]);
           }),
           const SizedBox(height: 10),
@@ -7275,6 +7404,50 @@ String formatNumber(num value) => value
     .toString()
     .replaceAllMapped(RegExp(r'(?<=\d)(?=(\d{3})+$)'), (match) => ',');
 
+class _RankPicker extends StatelessWidget {
+  const _RankPicker({required this.value, required this.maxRank,
+    required this.onChanged, this.width = 112, this.allowZero = true});
+  final int value;
+  final int maxRank;
+  final ValueChanged<int> onChanged;
+  final double width;
+  final bool allowZero;
+
+  @override
+  Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min,
+    children: [
+      _FilterDropdown<int>(
+        value: value,
+        values: [
+          ...List.generate(maxRank, (index) => maxRank - index),
+          if (allowZero) 0
+        ],
+        itemLabel: (rank) => rank == 0 ? '未学习' : '$rank 重',
+        width: width,
+        onChanged: (rank) { if (rank != null) onChanged(rank); }),
+      const SizedBox(width: 4),
+      Column(mainAxisSize: MainAxisSize.min, children: [
+        _RankStepButton(icon: Icons.keyboard_arrow_up, tooltip: '增加一重',
+          onPressed: value < maxRank ? () => onChanged(value + 1) : null),
+        _RankStepButton(icon: Icons.keyboard_arrow_down, tooltip: '减少一重',
+          onPressed: value > (allowZero ? 0 : 1)
+              ? () => onChanged(value - 1) : null),
+      ])
+    ]);
+}
+
+class _RankStepButton extends StatelessWidget {
+  const _RankStepButton({required this.icon, required this.tooltip,
+    required this.onPressed});
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+  @override
+  Widget build(BuildContext context) => SizedBox(width: 28, height: 23,
+    child: IconButton(tooltip: tooltip, onPressed: onPressed,
+      padding: EdgeInsets.zero, iconSize: 20, icon: Icon(icon)));
+}
+
 Future<void> showSkillRankDialog(BuildContext context, SkillStore store,
     CharacterData character, String skillName,
     {required String displayName}) async {
@@ -7287,17 +7460,9 @@ Future<void> showSkillRankDialog(BuildContext context, SkillStore store,
                   content: Row(children: [
                     const Text('当前重数'),
                     const Spacer(),
-                    _FilterDropdown<int>(
-                        value: selectedLevel,
-                        values: [
-                          ...List.generate(store.maxSkillRank,
-                              (index) => store.maxSkillRank - index),
-                          0
-                        ],
-                        itemLabel: (value) => value == 0 ? '未学习' : '$value 重',
-                        width: 112,
-                        onChanged: (value) => setState(
-                            () => selectedLevel = value ?? selectedLevel))
+                    _RankPicker(value: selectedLevel,
+                        maxRank: store.maxSkillRank,
+                        onChanged: (value) => setState(() => selectedLevel = value))
                   ]),
                   actions: [
                     TextButton(
@@ -7344,18 +7509,9 @@ Future<void> showSkillDialog(
                               style: const TextStyle(
                                   fontSize: 13, fontWeight: FontWeight.w400)),
                           const Spacer(),
-                          _FilterDropdown<int>(
-                              value: selectedLevel,
-                              values: [
-                                ...List.generate(store.maxSkillRank,
-                                    (index) => store.maxSkillRank - index),
-                                0
-                              ],
-                              itemLabel: (value) =>
-                                  value == 0 ? '未学习' : '$value 重',
-                              width: 112,
-                              onChanged: (value) => setState(
-                                  () => selectedLevel = value ?? selectedLevel))
+                          _RankPicker(value: selectedLevel,
+                              maxRank: store.maxSkillRank,
+                              onChanged: (value) => setState(() => selectedLevel = value))
                         ]),
                         if (allowNameEdit) ...[
                           const SizedBox(height: 10),
@@ -8181,10 +8337,12 @@ Future<Map<String, int>?> pickCharacterImageLevels(
   if (imageSize > 25 * 1024 * 1024) {
     throw const FormatException('图片文件过大，请选择小于 25 MB 的截图');
   }
-  // Windows uses its native decoder directly. Decoding and resizing a large
-  // screenshot in Dart can temporarily allocate hundreds of MB and previously
-  // caused the desktop process to become unresponsive or exit.
-  if (Platform.isMacOS) {
+  // Keep large Windows screenshots on the native decoder: decoding those in
+  // Dart can exhaust memory. Small, narrow PNG screenshots benefit from the
+  // same enlargement used by macOS before reading tiny Chinese characters.
+  final prepareWindowsImage = Platform.isWindows && imageSize <= 5 * 1024 * 1024 &&
+      await _isSmallNarrowPng(path);
+  if (Platform.isMacOS || prepareWindowsImage) {
     try {
       final prepared = await Isolate.run(() => _prepareOcrImage(path));
       if (prepared != null) {
@@ -8212,6 +8370,26 @@ Future<Map<String, int>?> pickCharacterImageLevels(
     }
   }
   return parseCharacterImageOcr(raw, store, gender);
+}
+
+Future<bool> _isSmallNarrowPng(String path) async {
+  final file = await File(path).open();
+  try {
+    final header = await file.read(24);
+    if (header.length < 24 ||
+        header[0] != 137 || header[1] != 80 || header[2] != 78 ||
+        header[3] != 71 || header[4] != 13 || header[5] != 10 ||
+        header[6] != 26 || header[7] != 10) return false;
+    int dimension(int offset) => (header[offset] << 24) |
+        (header[offset + 1] << 16) | (header[offset + 2] << 8) |
+        header[offset + 3];
+    final width = dimension(16);
+    final height = dimension(20);
+    return width > 0 && width < 900 && height > 0 &&
+        width * height <= 3000000;
+  } finally {
+    await file.close();
+  }
 }
 
 String? _prepareOcrImage(String path) {
@@ -8287,11 +8465,14 @@ Map<String, int> parseCharacterImageOcr(
     if (item is! Map) continue;
     final text = item['text']?.toString() ?? '';
     final normalizedText = normalize(text);
-    final header = rankHeaders.entries
-        .where((entry) => normalizedText.contains(entry.key))
-        .firstOrNull;
+    // Rank headings occupy their own short line and run from ten downwards.
+    // A misread "十重" as "一重" must not turn the entire first section into
+    // one-rank skills. Text inside a skill name is not a section heading.
+    final header = rankHeaders[normalizedText];
     if (header != null) {
-      currentRank = header.value;
+      if (header <= currentRank && currentRank - header <= 2) {
+        currentRank = header;
+      }
       continue;
     }
     for (final skill in knownSkills) {
@@ -8591,18 +8772,12 @@ class _DraftPreviewSkillRow extends StatelessWidget {
                     style: TextStyle(
                         color: skill.tradable ? purple : ink, fontSize: 12)))),
         Expanded(
-            flex: 2,
+            flex: 3,
             child: Center(
-                child: _FilterDropdown<int>(
-                    value: value,
-                    values: List.generate(
-                        maxSkillRank, (index) => maxSkillRank - index),
-                    itemLabel: (rank) => '$rank 重',
-                    width: 82,
-                    onChanged: (rank) {
-                      if (rank != null) onChanged(rank);
-                    }))),
-        const Expanded(flex: 6, child: SizedBox())
+                child: _RankPicker(value: value,
+                    maxRank: maxSkillRank, width: 82, allowZero: false,
+                    onChanged: onChanged))),
+        const Expanded(flex: 5, child: SizedBox())
       ]));
 }
 

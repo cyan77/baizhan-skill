@@ -38,4 +38,19 @@ void main() {
     expect(result['阴阳术退散'], 10);
     expect(result['画影飞赴'], 9);
   });
+
+  test('ignores an implausible one-rank heading in the ten-rank section', () {
+    final result = parseCharacterImageOcr([
+      {'text': '十重'},
+      {'text': '万花金创药'},
+      {'text': '一重'}, // Windows OCR can misread a small rank heading.
+      {'text': '阴阳术退散'},
+      {'text': '九重'},
+      {'text': '火魅指'},
+    ], testStore(), '女性');
+
+    expect(result['万花金创药'], 10);
+    expect(result['阴阳术退散'], 10);
+    expect(result['火魅指'], 9);
+  });
 }
