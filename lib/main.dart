@@ -6049,8 +6049,8 @@ class _BossProgressMatrixState extends State<_BossProgressMatrix> {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
-                            color: muted,
+                        style: TextStyle(
+                            color: skill.tradable ? purple : muted,
                             fontSize: 11,
                             fontWeight: FontWeight.w700))))
                 .toList());

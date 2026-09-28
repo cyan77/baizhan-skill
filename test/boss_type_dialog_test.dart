@@ -356,7 +356,7 @@ void main() {
         spirit: 400,
         stamina: 400,
         skills: [
-          Skill(id: 'progress-view-skill-1', name: '进度技能一'),
+          Skill(id: 'progress-view-skill-1', name: '进度技能一', tradable: true),
           Skill(id: 'progress-view-skill-2', name: '进度技能二')
         ]));
     store.bosses.add(Boss(
@@ -418,6 +418,8 @@ void main() {
     expect(find.text('缺失角色'), findsOneWidget);
     expect(find.text('进度技能一'), findsOneWidget);
     expect(find.text('进度技能二'), findsOneWidget);
+    expect(tester.widget<Text>(find.text('进度技能一')).style?.color, purple);
+    expect(tester.widget<Text>(find.text('进度技能二')).style?.color, muted);
     expect(find.text('2/2'), findsOneWidget);
     expect(find.text('0/2'), findsOneWidget);
     await tester.tap(find.text('全部类型'));
