@@ -5673,13 +5673,13 @@ class _FeaturedSkillProgressCardState
                     if (mounted) setState(() {});
                   },
                   child: Container(
-                      height: 56,
+                      height: 50,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       decoration: const BoxDecoration(
                           border: Border(bottom: BorderSide(color: line))),
                       child: Row(children: [
                         MindAvatar(character: character, radius: 14),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 8),
                         Flexible(
                             fit: FlexFit.loose,
                             child: Text(character.name,
