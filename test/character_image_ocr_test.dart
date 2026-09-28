@@ -85,4 +85,19 @@ void main() {
     expect(result['火魅指'], 4);
     expect(result['画影飞赴'], 1);
   });
+
+  test('only returns catalog skills and skips ambiguous OCR guesses', () {
+    final store = testStore();
+    store.bosses.single.skills.addAll([
+      Skill(id: 'five', name: '剑心通明'),
+      Skill(id: 'six', name: '剑心通灵'),
+    ]);
+    final result = parseCharacterImageOcr([
+      {'text': '万花金创药'},
+      {'text': '剑心通晴'}, // Equally close to both catalog entries.
+      {'text': '不存在的游戏技能'},
+    ], store, '女性');
+
+    expect(result, {'万花金创药': 10});
+  });
 }
