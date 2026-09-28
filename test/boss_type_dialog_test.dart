@@ -327,6 +327,14 @@ void main() {
         mind: '花间游',
         position: '输出',
         levels: const {'important-skill': 10, 'tradable-skill': 8}));
+    store.characters.add(CharacterData(
+        id: 'completed-featured-character',
+        name: '已完成角色',
+        gender: '女性',
+        school: '万花',
+        mind: '花间游',
+        position: '输出',
+        levels: const {'important-skill': 10, 'tradable-skill': 10}));
     store.importantSkills.add('测试重要技能');
     store.purpleSkills.add('测试可交易技能');
 
@@ -337,41 +345,41 @@ void main() {
     expect(find.text('可交易技能'), findsOneWidget);
     expect(find.text('测试重要技能'), findsOneWidget);
     expect(find.text('测试可交易技能'), findsNothing);
-    expect(find.text('1/1 个角色已全部收集'), findsOneWidget);
+    expect(find.text('2/2 个角色已全部收集'), findsOneWidget);
     expect(find.text('100%'), findsOneWidget);
     await tester.tap(find.text('测试重要技能'));
     await tester.pumpAndSettle();
     expect(find.text('汇总角色'), findsOneWidget);
     await tester.tap(find.text('只看未完成'));
     await tester.pumpAndSettle();
-    expect(find.text('测试重要技能'), findsOneWidget);
-    expect(find.text('汇总角色'), findsNothing);
-    expect(find.text('0/0 个角色已全部收集'), findsOneWidget);
+    expect(find.text('测试重要技能'), findsNothing);
+    expect(find.text('没有符合条件的技能'), findsOneWidget);
 
     await tester.tap(find.text('可交易技能'));
     await tester.pumpAndSettle();
     expect(find.text('测试重要技能'), findsNothing);
     expect(find.text('测试可交易技能'), findsOneWidget);
-    expect(find.text('0/1 个角色已全部收集'), findsOneWidget);
-    expect(find.text('0%'), findsOneWidget);
+    expect(find.text('1/2 个角色已全部收集'), findsOneWidget);
+    expect(find.text('50%'), findsOneWidget);
     await tester.tap(find.text('只看未完成'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('测试可交易技能'));
     await tester.pumpAndSettle();
     expect(find.text('汇总角色'), findsOneWidget);
+    expect(find.text('已完成角色'), findsNothing);
+    expect(find.text('0/1 个角色已全部收集'), findsOneWidget);
     expect(find.byTooltip('增加一重'), findsOneWidget);
     await tester.tap(find.byTooltip('增加一重'));
     await tester.pump();
     await tester.tap(find.byTooltip('增加一重'));
     await tester.pumpAndSettle();
     expect(store.skillLevelForName('featured-character', '测试可交易技能'), 10);
-    expect(find.text('测试可交易技能'), findsOneWidget);
-    expect(find.text('汇总角色'), findsNothing);
-    expect(find.text('0/0 个角色已全部收集'), findsOneWidget);
+    expect(find.text('测试可交易技能'), findsNothing);
+    expect(find.text('没有符合条件的技能'), findsOneWidget);
     await tester.tap(find.text('只看未完成'));
     await tester.pumpAndSettle();
     expect(find.text('测试可交易技能'), findsOneWidget);
-    expect(find.text('1/1 个角色已全部收集'), findsOneWidget);
+    expect(find.text('2/2 个角色已全部收集'), findsOneWidget);
     expect(store.featuredSkillsTab, 1);
     expect(tester.takeException(), isNull);
   });

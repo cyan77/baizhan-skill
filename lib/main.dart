@@ -5341,7 +5341,14 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
   @override
   Widget build(BuildContext context) {
     final characters = filteredCharacters;
-    final skills = filteredSkills;
+    final matchingSkills = filteredSkills;
+    final skills = onlyIncomplete
+        ? matchingSkills
+            .where((name) => characters.any((character) =>
+                widget.store.skillLevelForName(character.id, name) <
+                widget.store.maxSkillRank))
+            .toList()
+        : matchingSkills;
     return LayoutBuilder(builder: (context, constraints) {
       final width = _filterItemWidth(constraints.maxWidth, 3);
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
