@@ -6,10 +6,22 @@ import 'package:baizhan_skill/boss_catalog_service.dart';
 import 'package:baizhan_skill/sync_service.dart';
 import 'package:baizhan_skill/update_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  const localStorageChannel = MethodChannel('baizhan_skill/local_storage');
+  setUpAll(() async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(localStorageChannel, (call) async => false);
+  });
+  tearDownAll(() async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(localStorageChannel, null);
+  });
+
   test('release versions compare numerically', () {
     expect(isVersionNewer('0.1.3', '0.1.2'), isTrue);
     expect(isVersionNewer('v0.2.0', '0.1.9'), isTrue);
@@ -106,6 +118,44 @@ void main() {
         (await SharedPreferences.getInstance())
             .getString(SkillStore.storageKey),
         isNull);
+  });
+
+  test('local data migration completes immediately without a restart',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('baizhan-test-');
+    addTearDown(() => directory.delete(recursive: true));
+    final target = File('${directory.path}/immediate-data.json');
+    SharedPreferences.setMockInitialValues({});
+    final store = SkillStore(
+        bossCatalogService: _FakeBossCatalogService(RemoteBossCatalog(
+            version: 1, updatedAt: '', notes: '', bosses: [])));
+    await store.load();
+
+    await store.migrateLocalData(target.path);
+
+    expect(store.localDataPath, target.path);
+    expect(store.localDataMigrationPending, isFalse);
+    expect(await target.exists(), isTrue);
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getString(SkillStore.localDataPathKey), target.path);
+    expect(preferences.getString(SkillStore.pendingLocalDataPathKey), isNull);
+  });
+
+  test('failed local data migration remains retryable', () async {
+    final directory = await Directory.systemTemp.createTemp('baizhan-test-');
+    addTearDown(() => directory.delete(recursive: true));
+    SharedPreferences.setMockInitialValues({});
+    final store = SkillStore(
+        bossCatalogService: _FakeBossCatalogService(RemoteBossCatalog(
+            version: 1, updatedAt: '', notes: '', bosses: [])));
+    await store.load();
+
+    await expectLater(
+        store.migrateLocalData(directory.path), throwsA(anything));
+
+    expect(store.localDataMigrationPending, isTrue);
+    expect(store.pendingLocalDataPath, directory.path);
+    expect(store.localDataLocationLabel(), contains('点击重试'));
   });
 
   test('Boss collection progress uses the next rank target', () {

@@ -32,6 +32,7 @@ const formLabelStyle = TextStyle(
     color: muted, fontSize: 12, fontWeight: FontWeight.w400, height: 1.1);
 
 final _missingJsonValue = Object();
+const _localStorageChannel = MethodChannel('baizhan_skill/local_storage');
 
 class _JsonMergeState {
   final conflicts = <String>[];
@@ -668,6 +669,9 @@ class SkillStore extends ChangeNotifier {
     _lastSyncedData = await syncSettingsStore.loadLastSyncedData();
     bossCatalogVersion = _prefs!.getInt(bossCatalogVersionKey) ?? 1;
     skippedBossCatalogVersion = _prefs!.getInt(bossCatalogSkippedVersionKey);
+    if (Platform.isMacOS) {
+      await _localStorageChannel.invokeMethod<Object?>('restoreBookmark');
+    }
     await _migratePendingLocalData();
     localDataPath = _prefs!.getString(localDataPathKey);
     final raw = await _readLocalData();
@@ -720,14 +724,17 @@ class SkillStore extends ChangeNotifier {
     }
   }
 
-  Future<void> _migratePendingLocalData() async {
+  Future<void> _migratePendingLocalData({
+    bool throwOnFailure = false,
+    String? sourceData,
+  }) async {
     final pending = _prefs?.getString(pendingLocalDataPathKey);
     if (pending == null) return;
 
     localDataMigrationPending = true;
     pendingLocalDataPath = pending.trim().isEmpty ? null : pending.trim();
     final previousPath = _prefs?.getString(localDataPathKey);
-    final raw = await _readDataFromPath(previousPath);
+    final raw = sourceData ?? await _readDataFromPath(previousPath);
     final targetPath = pending.trim().isEmpty ? null : pending.trim();
     try {
       if (targetPath == null) {
@@ -741,10 +748,12 @@ class SkillStore extends ChangeNotifier {
         await _prefs?.remove(storageKey);
       }
       await _prefs?.remove(pendingLocalDataPathKey);
+      localDataPath = targetPath;
       localDataMigrationPending = false;
       pendingLocalDataPath = null;
-    } catch (_) {
+    } catch (error) {
       // Keep the pending path so the next launch can retry the migration.
+      if (throwOnFailure) rethrow;
     }
   }
 
@@ -762,7 +771,7 @@ class SkillStore extends ChangeNotifier {
   String localDataLocationLabel() {
     if (localDataMigrationPending) {
       final target = pendingLocalDataPath;
-      return target == null ? '重启后迁移到系统默认位置' : '重启后迁移到：$target';
+      return target == null ? '迁移未完成，点击重试迁移到系统默认位置' : '迁移未完成，点击重试：$target';
     }
     return localDataPath ?? '系统默认位置（应用数据目录）';
   }
@@ -775,22 +784,23 @@ class SkillStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> restartForLocalDataMigration() async {
+  Future<void> migrateLocalData(String? path) async {
     await _localWriteQueue;
+    final sourceData = jsonEncode(_json());
     if (Platform.isMacOS) {
-      final appPath =
-          File(Platform.resolvedExecutable).parent.parent.parent.path;
-      // Without -n, macOS may only activate the existing process instead of
-      // launching a new one. The pending migration would then remain in the
-      // current in-memory store and continue to appear as "待重启".
-      await Process.start('open', ['-n', appPath],
-          mode: ProcessStartMode.detached);
-    } else {
-      await Process.start(
-          Platform.resolvedExecutable, Platform.executableArguments,
-          mode: ProcessStartMode.detached);
+      if (path == null || path.trim().isEmpty) {
+        await _localStorageChannel.invokeMethod<void>('clearBookmark');
+      } else {
+        await _localStorageChannel
+            .invokeMethod<void>('saveBookmark', {'path': path.trim()});
+      }
     }
-    exit(0);
+    await scheduleLocalDataMigration(path);
+    await _migratePendingLocalData(
+      throwOnFailure: true,
+      sourceData: sourceData,
+    );
+    notifyListeners();
   }
 
   Future<void> _initializeRemoteSync() async {
@@ -3826,7 +3836,9 @@ class _ExistingSkillsPanelState extends State<ExistingSkillsPanel> {
     visibleSkillIds ??= {
       for (final boss in store.bosses)
         if (bossQuery.text.trim().isEmpty ||
-            boss.name.toLowerCase().contains(bossQuery.text.trim().toLowerCase()))
+            boss.name
+                .toLowerCase()
+                .contains(bossQuery.text.trim().toLowerCase()))
           for (final skill in boss.skills)
             if (_matches(skill)) skill.id
     };
@@ -3865,9 +3877,9 @@ class _ExistingSkillsPanelState extends State<ExistingSkillsPanel> {
                   compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
                   width: width,
                   onChanged: (value) => setState(() {
-                    maxRank = value ?? maxRank;
-                    visibleSkillIds = null;
-                  }))
+                        maxRank = value ?? maxRank;
+                        visibleSkillIds = null;
+                      }))
             ]);
           }),
           const SizedBox(height: 6),
@@ -4969,34 +4981,55 @@ class _SkillMatrixState extends State<SkillMatrix> {
                                           displayName:
                                               displaySkillLabel(skillName)),
                                       child: Row(children: [
-                                        Expanded(child: Center(child: RankBadge(
-                                            rank: store.skillLevelForName(
-                                                character.id, skillName),
-                                            plain: true))),
-                                        Column(mainAxisSize: MainAxisSize.min,
+                                        Expanded(
+                                            child: Center(
+                                                child: RankBadge(
+                                                    rank:
+                                                        store.skillLevelForName(
+                                                            character.id,
+                                                            skillName),
+                                                    plain: true))),
+                                        Column(
+                                            mainAxisSize: MainAxisSize.min,
                                             children: [
-                                          _RankStepButton(
-                                              icon: Icons.keyboard_arrow_up,
-                                              tooltip: '增加一重',
-                                              onPressed: store.skillLevelForName(
-                                                          character.id, skillName) <
-                                                      store.maxSkillRank
-                                                  ? () => store.setLevelForSkillName(
-                                                      character.id, skillName,
-                                                      store.skillLevelForName(
-                                                              character.id, skillName) + 1)
-                                                  : null),
-                                          _RankStepButton(
-                                              icon: Icons.keyboard_arrow_down,
-                                              tooltip: '减少一重',
-                                              onPressed: store.skillLevelForName(
-                                                          character.id, skillName) > 0
-                                                  ? () => store.setLevelForSkillName(
-                                                      character.id, skillName,
-                                                      store.skillLevelForName(
-                                                              character.id, skillName) - 1)
-                                                  : null)
-                                        ])
+                                              _RankStepButton(
+                                                  icon: Icons.keyboard_arrow_up,
+                                                  tooltip: '增加一重',
+                                                  onPressed: store
+                                                              .skillLevelForName(
+                                                                  character.id,
+                                                                  skillName) <
+                                                          store.maxSkillRank
+                                                      ? () => store
+                                                          .setLevelForSkillName(
+                                                              character.id,
+                                                              skillName,
+                                                              store.skillLevelForName(
+                                                                      character
+                                                                          .id,
+                                                                      skillName) +
+                                                                  1)
+                                                      : null),
+                                              _RankStepButton(
+                                                  icon:
+                                                      Icons.keyboard_arrow_down,
+                                                  tooltip: '减少一重',
+                                                  onPressed: store
+                                                              .skillLevelForName(
+                                                                  character.id,
+                                                                  skillName) >
+                                                          0
+                                                      ? () => store
+                                                          .setLevelForSkillName(
+                                                              character.id,
+                                                              skillName,
+                                                              store.skillLevelForName(
+                                                                      character
+                                                                          .id,
+                                                                      skillName) -
+                                                                  1)
+                                                      : null)
+                                            ])
                                       ]))))))
                       .toList()))
               .toList());
@@ -5117,7 +5150,8 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
   void initState() {
     super.initState();
     final saved = widget.store.skillPageFilters[widget.pageId];
-    characterId = widget.store.pendingSkillPageCharacterId ?? saved?.characterId ?? 'all';
+    characterId =
+        widget.store.pendingSkillPageCharacterId ?? saved?.characterId ?? 'all';
     maxRank = widget.store.pendingSkillPageMaxRank ?? saved?.maxRank ?? 0;
     skillQuery.text = saved?.query ?? '';
     skillQuery.addListener(_onSkillQueryChanged);
@@ -5309,9 +5343,9 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
                   width: width,
                   searchable: true,
                   onChanged: (value) => setState(() {
-                    characterId = value ?? 'all';
-                    widget.store.skillPageResults.remove(widget.pageId);
-                  })),
+                        characterId = value ?? 'all';
+                        widget.store.skillPageResults.remove(widget.pageId);
+                      })),
               _NameAutocomplete(
                   controller: skillQuery,
                   names: widget.skillNames,
@@ -5329,9 +5363,9 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
                   compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
                   width: width,
                   onChanged: (value) => setState(() {
-                    maxRank = value ?? maxRank;
-                    widget.store.skillPageResults.remove(widget.pageId);
-                  }))
+                        maxRank = value ?? maxRank;
+                        widget.store.skillPageResults.remove(widget.pageId);
+                      }))
             ]);
           }));
 
@@ -5476,7 +5510,10 @@ class PurplePage extends StatelessWidget {
                         color: purple, fontWeight: FontWeight.w700))
               ]))),
           SkillSummaryFilters(
-              store: store, pageId: 2, skillNames: store.purpleSkills, accent: purple)
+              store: store,
+              pageId: 2,
+              skillNames: store.purpleSkills,
+              accent: purple)
         ]));
   }
 }
@@ -5499,7 +5536,8 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
     super.initState();
     final saved = widget.store.skillPageFilters[3];
     characterId = widget.store.pendingSkillPageCharacterId ??
-        saved?.characterId ?? (widget.store.selectedCharacterId.isNotEmpty
+        saved?.characterId ??
+        (widget.store.selectedCharacterId.isNotEmpty
             ? widget.store.selectedCharacterId
             : 'all');
     maxRank = widget.store.pendingSkillPageMaxRank ?? saved?.maxRank ?? 0;
@@ -5553,7 +5591,9 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
   List<Boss> get filteredBosses {
     final cached = widget.store.skillPageResults[3];
     if (cached != null) {
-      return widget.store.bosses.where((boss) => cached.contains(boss.id)).toList();
+      return widget.store.bosses
+          .where((boss) => cached.contains(boss.id))
+          .toList();
     }
     final query = bossQuery.text.trim().toLowerCase();
     final character = effectiveCharacterId == 'all' || characters.isEmpty
@@ -5620,9 +5660,9 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
           CharacterSwitcher(
               store: widget.store,
               onSelected: (value) => setState(() {
-                characterId = value;
-                widget.store.skillPageResults.remove(3);
-              })),
+                    characterId = value;
+                    widget.store.skillPageResults.remove(3);
+                  })),
           const SizedBox(height: 10),
           LayoutBuilder(builder: (context, constraints) {
             final width = _filterItemWidth(constraints.maxWidth, 2);
@@ -5658,9 +5698,9 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
                   compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
                   width: width,
                   onChanged: (value) => setState(() {
-                    maxRank = value ?? 0;
-                    widget.store.skillPageResults.remove(3);
-                  }))
+                        maxRank = value ?? 0;
+                        widget.store.skillPageResults.remove(3);
+                      }))
             ]);
           }),
           const SizedBox(height: 10),
@@ -6380,7 +6420,7 @@ class SettingsPage extends StatelessWidget {
             icon: Icons.folder_open_outlined,
             title: '本地数据位置',
             subtitle: store.localDataLocationLabel(),
-            trailing: Text(store.localDataMigrationPending ? '待重启' : '修改',
+            trailing: Text(store.localDataMigrationPending ? '重试' : '修改',
                 style: const TextStyle(color: teal, fontSize: 12)),
             onTap: () => _selectLocalDataPath(context)),
         const SizedBox(height: 10),
@@ -6432,19 +6472,22 @@ class SettingsPage extends StatelessWidget {
       final confirmed = await showDialog<bool>(
           context: context,
           builder: (dialogContext) => AlertDialog(
-                  title: const Text('重启并迁移本地数据'),
-                  content: Text('确认后应用会立即重启，并把当前数据迁移到：\n$selected'),
+                  title: const Text('迁移本地数据'),
+                  content: Text('确认后会立即把当前数据迁移到：\n$selected'),
                   actions: [
                     TextButton(
                         onPressed: () => Navigator.pop(dialogContext, false),
                         child: const Text('取消')),
                     FilledButton(
                         onPressed: () => Navigator.pop(dialogContext, true),
-                        child: const Text('重启并迁移'))
+                        child: const Text('立即迁移'))
                   ]));
       if (confirmed != true) return;
-      await store.scheduleLocalDataMigration(selected);
-      await store.restartForLocalDataMigration();
+      await store.migrateLocalData(selected);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('本地数据位置已迁移')));
+      }
     } catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context)
@@ -7405,8 +7448,12 @@ String formatNumber(num value) => value
     .replaceAllMapped(RegExp(r'(?<=\d)(?=(\d{3})+$)'), (match) => ',');
 
 class _RankPicker extends StatelessWidget {
-  const _RankPicker({required this.value, required this.maxRank,
-    required this.onChanged, this.width = 112, this.allowZero = true});
+  const _RankPicker(
+      {required this.value,
+      required this.maxRank,
+      required this.onChanged,
+      this.width = 112,
+      this.allowZero = true});
   final int value;
   final int maxRank;
   final ValueChanged<int> onChanged;
@@ -7414,38 +7461,51 @@ class _RankPicker extends StatelessWidget {
   final bool allowZero;
 
   @override
-  Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min,
-    children: [
-      _FilterDropdown<int>(
-        value: value,
-        values: [
-          ...List.generate(maxRank, (index) => maxRank - index),
-          if (allowZero) 0
-        ],
-        itemLabel: (rank) => rank == 0 ? '未学习' : '$rank 重',
-        width: width,
-        onChanged: (rank) { if (rank != null) onChanged(rank); }),
-      const SizedBox(width: 4),
-      Column(mainAxisSize: MainAxisSize.min, children: [
-        _RankStepButton(icon: Icons.keyboard_arrow_up, tooltip: '增加一重',
-          onPressed: value < maxRank ? () => onChanged(value + 1) : null),
-        _RankStepButton(icon: Icons.keyboard_arrow_down, tooltip: '减少一重',
-          onPressed: value > (allowZero ? 0 : 1)
-              ? () => onChanged(value - 1) : null),
-      ])
-    ]);
+  Widget build(BuildContext context) =>
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        _FilterDropdown<int>(
+            value: value,
+            values: [
+              ...List.generate(maxRank, (index) => maxRank - index),
+              if (allowZero) 0
+            ],
+            itemLabel: (rank) => rank == 0 ? '未学习' : '$rank 重',
+            width: width,
+            onChanged: (rank) {
+              if (rank != null) onChanged(rank);
+            }),
+        const SizedBox(width: 4),
+        Column(mainAxisSize: MainAxisSize.min, children: [
+          _RankStepButton(
+              icon: Icons.keyboard_arrow_up,
+              tooltip: '增加一重',
+              onPressed: value < maxRank ? () => onChanged(value + 1) : null),
+          _RankStepButton(
+              icon: Icons.keyboard_arrow_down,
+              tooltip: '减少一重',
+              onPressed: value > (allowZero ? 0 : 1)
+                  ? () => onChanged(value - 1)
+                  : null),
+        ])
+      ]);
 }
 
 class _RankStepButton extends StatelessWidget {
-  const _RankStepButton({required this.icon, required this.tooltip,
-    required this.onPressed});
+  const _RankStepButton(
+      {required this.icon, required this.tooltip, required this.onPressed});
   final IconData icon;
   final String tooltip;
   final VoidCallback? onPressed;
   @override
-  Widget build(BuildContext context) => SizedBox(width: 28, height: 23,
-    child: IconButton(tooltip: tooltip, onPressed: onPressed,
-      padding: EdgeInsets.zero, iconSize: 20, icon: Icon(icon)));
+  Widget build(BuildContext context) => SizedBox(
+      width: 28,
+      height: 23,
+      child: IconButton(
+          tooltip: tooltip,
+          onPressed: onPressed,
+          padding: EdgeInsets.zero,
+          iconSize: 20,
+          icon: Icon(icon)));
 }
 
 Future<void> showSkillRankDialog(BuildContext context, SkillStore store,
@@ -7460,9 +7520,11 @@ Future<void> showSkillRankDialog(BuildContext context, SkillStore store,
                   content: Row(children: [
                     const Text('当前重数'),
                     const Spacer(),
-                    _RankPicker(value: selectedLevel,
+                    _RankPicker(
+                        value: selectedLevel,
                         maxRank: store.maxSkillRank,
-                        onChanged: (value) => setState(() => selectedLevel = value))
+                        onChanged: (value) =>
+                            setState(() => selectedLevel = value))
                   ]),
                   actions: [
                     TextButton(
@@ -7509,9 +7571,11 @@ Future<void> showSkillDialog(
                               style: const TextStyle(
                                   fontSize: 13, fontWeight: FontWeight.w400)),
                           const Spacer(),
-                          _RankPicker(value: selectedLevel,
+                          _RankPicker(
+                              value: selectedLevel,
                               maxRank: store.maxSkillRank,
-                              onChanged: (value) => setState(() => selectedLevel = value))
+                              onChanged: (value) =>
+                                  setState(() => selectedLevel = value))
                         ]),
                         if (allowNameEdit) ...[
                           const SizedBox(height: 10),
@@ -8177,7 +8241,8 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                                                   importedLevels,
                                                   initialSkillLevel,
                                                   gender,
-                                                  recognizedFromImage: levels.length);
+                                                  recognizedFromImage:
+                                                      levels.length);
                                             }
                                           } catch (error) {
                                             if (context.mounted) {
@@ -8357,13 +8422,14 @@ Future<Map<String, int>?> pickCharacterImageLevels(
     if (!await File(imagePath).exists()) {
       throw FormatException('识别图片不存在：$imagePath');
     }
-    return await channel.invokeListMethod<dynamic>(
-          'recognizeText', {'path': File(imagePath).absolute.path}
-        ).timeout(const Duration(seconds: 45),
+    return await channel.invokeListMethod<dynamic>('recognizeText', {
+          'path': File(imagePath).absolute.path
+        }).timeout(const Duration(seconds: 45),
             onTimeout: () => throw const FormatException(
                 '图片识别超时，请裁剪图片后重试，并确认系统已安装简体中文 OCR')) ??
         const [];
   }
+
   Future<List<dynamic>> recognizeWithFallback() async {
     if (ocrPath == path) return recognize(path);
     try {
@@ -8375,6 +8441,7 @@ Future<Map<String, int>?> pickCharacterImageLevels(
       return recognize(path);
     }
   }
+
   try {
     raw = await recognizeWithFallback();
   } finally {
@@ -8779,8 +8846,11 @@ class _DraftPreviewSkillRow extends StatelessWidget {
         Expanded(
             flex: 3,
             child: Center(
-                child: _RankPicker(value: value,
-                    maxRank: maxSkillRank, width: 82, allowZero: false,
+                child: _RankPicker(
+                    value: value,
+                    maxRank: maxSkillRank,
+                    width: 82,
+                    allowZero: false,
                     onChanged: onChanged))),
         const Expanded(flex: 5, child: SizedBox())
       ]));
