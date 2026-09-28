@@ -9234,7 +9234,25 @@ Map<String, int> parseCharacterImageOcr(
         editDistance(text, name) <= 1;
   }
 
-  for (final item in raw) {
+  // Windows OCR can return columns out of reading order. Rank headings span
+  // all three columns, so place them by their vertical screenshot position.
+  final positioned = raw.whereType<Map>().where((item) =>
+      item['y'] is num && item['x'] is num).toList()
+    ..sort((left, right) =>
+        (left['y'] as num).compareTo(right['y'] as num));
+  final rankPositions = <(double, int)>[];
+  var lastHeader = 10;
+  for (final item in positioned) {
+    final header = rankHeaders[normalize(item['text']?.toString() ?? '')];
+    if (header == null || (item['x'] as num) > 0.18) continue;
+    if (header <= lastHeader && lastHeader - header <= 2) {
+      rankPositions.add(((item['y'] as num).toDouble(), header));
+      lastHeader = header;
+    }
+  }
+  final ordered = positioned.length == raw.whereType<Map>().length
+      ? positioned : raw;
+  for (final item in ordered) {
     if (item is! Map) continue;
     final text = item['text']?.toString() ?? '';
     final normalizedText = normalize(text);
@@ -9243,16 +9261,25 @@ Map<String, int> parseCharacterImageOcr(
     // one-rank skills. Text inside a skill name is not a section heading.
     final header = rankHeaders[normalizedText];
     if (header != null) {
+      if (rankPositions.isNotEmpty) continue;
       if (header <= currentRank && currentRank - header <= 2) {
         currentRank = header;
       }
       continue;
     }
+    var skillRank = currentRank;
+    if (rankPositions.isNotEmpty && item['y'] is num) {
+      final y = (item['y'] as num).toDouble();
+      for (final (headerY, rank) in rankPositions) {
+        if (headerY > y + 0.006) break;
+        skillRank = rank;
+      }
+    }
     for (final skill in knownSkills) {
       final skillName = skillNameForGender(skill, gender);
       final normalizedName = normalize(skillName);
       if (approximatelyContains(normalizedText, normalizedName)) {
-        levels[skill.name] = currentRank;
+        levels[skill.name] = skillRank;
       }
     }
   }
