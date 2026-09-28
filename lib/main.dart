@@ -5765,8 +5765,9 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
           ],
           const SizedBox(height: 12),
           LayoutBuilder(builder: (context, constraints) {
-            final width = _filterItemWidth(
-                constraints.maxWidth, showBossProgress ? 2 : 3);
+            final width = _filterItemWidth(constraints.maxWidth, 3);
+            final incompleteFilterWidth =
+                constraints.maxWidth < 600 ? 126.0 : 138.0;
             return Wrap(spacing: 10, runSpacing: 10, children: [
               if (!showBossProgress)
                 _FilterDropdown<String>(
@@ -5801,14 +5802,24 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
                   compactHint: '首领'),
               if (showBossProgress)
                 SizedBox(
-                    width: width,
-                    child: FilterChip(
-                        selected: onlyIncomplete,
-                        avatar: const Icon(Icons.pending_actions_outlined,
-                            size: 17),
-                        label: const Text('只看未完成'),
-                        onSelected: (value) =>
-                            setState(() => onlyIncomplete = value)))
+                    width: incompleteFilterWidth,
+                    height: 42,
+                    child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: FilterChip(
+                            selected: onlyIncomplete,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 7),
+                            selectedColor: const Color(0xffe1f1ea),
+                            side: const BorderSide(color: line),
+                            avatar: const Icon(Icons.pending_actions_outlined,
+                                size: 16),
+                            label: const Text('只看未完成'),
+                            onSelected: (value) =>
+                                setState(() => onlyIncomplete = value))))
               else
                 _FilterDropdown<int>(
                     value: maxRank,

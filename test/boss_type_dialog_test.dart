@@ -391,6 +391,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('全部角色'), findsNothing);
+    final incompleteChip = tester.getRect(find.byType(FilterChip));
+    expect(incompleteChip.width, lessThanOrEqualTo(138));
+    expect(incompleteChip.height, lessThanOrEqualTo(42));
     expect(find.textContaining('1/2 个角色已全部收集'), findsOneWidget);
     await tester.tap(find.text('进度视图首领'));
     await tester.pumpAndSettle();
