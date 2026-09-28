@@ -5739,7 +5739,7 @@ class _FeaturedSkillProgressCardState
                                                     }
                                                   : null)
                                         ])
-                                  ])))));
+                                  ]))))));
             })
           ]
         ]));
