@@ -5685,49 +5685,61 @@ class _FeaturedSkillProgressCardState
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       decoration: const BoxDecoration(
                           border: Border(bottom: BorderSide(color: line))),
-                      child: Row(children: [
-                        MindAvatar(character: character, radius: 14),
-                        const SizedBox(width: 8),
-                        Flexible(
-                            fit: FlexFit.loose,
-                            child: Text(character.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    color: ink,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700))),
-                        const SizedBox(width: 22),
-                        RankBadge(rank: rank, plain: true),
-                        const SizedBox(width: 12),
-                        Column(mainAxisSize: MainAxisSize.min, children: [
-                          _RankStepButton(
-                              icon: Icons.keyboard_arrow_up,
-                              tooltip: '增加一重',
-                              onPressed: rank < widget.store.maxSkillRank
-                                  ? () {
-                                      widget.store.setLevelForSkillName(
-                                          character.id,
-                                          widget.skillName,
-                                          rank + 1);
-                                      setState(() {});
-                                    }
-                                  : null),
-                          _RankStepButton(
-                              icon: Icons.keyboard_arrow_down,
-                              tooltip: '减少一重',
-                              onPressed: rank > 0
-                                  ? () {
-                                      widget.store.setLevelForSkillName(
-                                          character.id,
-                                          widget.skillName,
-                                          rank - 1);
-                                      setState(() {});
-                                    }
-                                  : null)
-                        ]),
-                        const Spacer()
-                      ])));
+                      child: LayoutBuilder(
+                          builder: (context, constraints) => Align(
+                              alignment: Alignment.centerLeft,
+                              child: SizedBox(
+                                  width: math.min(constraints.maxWidth, 420.0),
+                                  child: Row(children: [
+                                    MindAvatar(
+                                        character: character, radius: 14),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                        flex: 3,
+                                        child: Text(character.name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                                color: ink,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700))),
+                                    Expanded(
+                                        flex: 2,
+                                        child: Center(
+                                            child: RankBadge(
+                                                rank: rank, plain: true))),
+                                    Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          _RankStepButton(
+                                              icon: Icons.keyboard_arrow_up,
+                                              tooltip: '增加一重',
+                                              onPressed: rank <
+                                                      widget.store.maxSkillRank
+                                                  ? () {
+                                                      widget.store
+                                                          .setLevelForSkillName(
+                                                              character.id,
+                                                              widget.skillName,
+                                                              rank + 1);
+                                                      setState(() {});
+                                                    }
+                                                  : null),
+                                          _RankStepButton(
+                                              icon: Icons.keyboard_arrow_down,
+                                              tooltip: '减少一重',
+                                              onPressed: rank > 0
+                                                  ? () {
+                                                      widget.store
+                                                          .setLevelForSkillName(
+                                                              character.id,
+                                                              widget.skillName,
+                                                              rank - 1);
+                                                      setState(() {});
+                                                    }
+                                                  : null)
+                                        ])
+                                  ])))));
             })
           ]
         ]));
