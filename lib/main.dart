@@ -5492,13 +5492,6 @@ class _FeaturedSkillsPageState extends State<FeaturedSkillsPage> {
   @override
   Widget build(BuildContext context) {
     final store = widget.store;
-    final highest = store.purpleSkills.fold<int>(
-        0,
-        (current, name) =>
-            math.max(current, store.highestSkillLevelForName(name)));
-    final highestCount = store.purpleSkills
-        .where((name) => store.highestSkillLevelForName(name) == highest)
-        .length;
     final important = selectedTab == 0;
     return PageBody(
         title: '关注技能',
@@ -5532,10 +5525,6 @@ class _FeaturedSkillsPageState extends State<FeaturedSkillsPage> {
                   })),
           const SizedBox(height: 14),
           if (important) ...[
-            const Padding(
-                padding: EdgeInsets.only(bottom: 14),
-                child: Text('点击重数即可修改，修改会同步到对应角色的技能记录。',
-                    style: TextStyle(color: muted, fontSize: 12))),
             SkillSummaryFilters(
                 key: const ValueKey('important-skills'),
                 store: store,
@@ -5545,20 +5534,6 @@ class _FeaturedSkillsPageState extends State<FeaturedSkillsPage> {
                 onDeleteSkill: (name) =>
                     showRemoveImportantSkillDialog(context, store, name))
           ] else ...[
-            Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: CardShell(
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Icons.auto_awesome, color: purple),
-                  const SizedBox(width: 10),
-                  const Flexible(
-                      child: Text('可交易技能以紫色标识，点击重数即可修改并同步角色记录。',
-                          style: TextStyle(color: muted, fontSize: 12))),
-                  Text(
-                      highest == 0 ? '暂无已学习' : '$highestCount 个达到最高 $highest 重',
-                      style: const TextStyle(
-                          color: purple, fontWeight: FontWeight.w700))
-                ]))),
             SkillSummaryFilters(
                 key: const ValueKey('tradable-skills'),
                 store: store,
