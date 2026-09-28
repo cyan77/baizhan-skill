@@ -3,17 +3,33 @@
 set -u
 
 app_executable="/Applications/百战异闻录助手.app/Contents/MacOS/百战异闻录助手"
+app_process_name="百战异闻录助手"
 
-# Stop the installed copy before pkgbuild replaces its files. Without this,
-# macOS keeps the old executable and Flutter assets alive until the user quits.
-/usr/bin/pkill -f "^${app_executable}( |$)" 2>/dev/null || true
+is_running() {
+  /usr/bin/pgrep -x "$app_process_name" >/dev/null 2>&1 ||
+    /usr/bin/pgrep -f "^${app_executable}( |$)" >/dev/null 2>&1
+}
+
+# Match both the process name and the full executable path. Depending on how
+# Finder/open launched the app, macOS may expose only one of these forms.
+/usr/bin/pkill -TERM -x "$app_process_name" 2>/dev/null || true
+/usr/bin/pkill -TERM -f "^${app_executable}( |$)" 2>/dev/null || true
 
 for _ in 1 2 3 4 5; do
-  if ! /usr/bin/pgrep -f "^${app_executable}( |$)" >/dev/null 2>&1; then
+  if ! is_running; then
     exit 0
   fi
   /bin/sleep 1
 done
 
-# Do not fail installation if an older process takes longer to terminate.
+# Do not install new files underneath a copy that ignored TERM.
+/usr/bin/pkill -KILL -x "$app_process_name" 2>/dev/null || true
+/usr/bin/pkill -KILL -f "^${app_executable}( |$)" 2>/dev/null || true
+/bin/sleep 1
+
+if is_running; then
+  echo "无法关闭正在运行的百战异闻录助手，请手动退出后重试安装。" >&2
+  exit 1
+fi
+
 exit 0

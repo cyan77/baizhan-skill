@@ -7191,7 +7191,7 @@ class _UpdateSettingCardState extends State<_UpdateSettingCard> {
                                   const TextStyle(color: muted, fontSize: 12)),
                           if (Platform.isMacOS) ...[
                             const SizedBox(height: 10),
-                            const Text('安装更新时会关闭当前应用，并在安装完成后自动打开新版本。',
+                            const Text('打开下载后当前应用会退出，安装完成后会自动打开新版本。',
                                 style: TextStyle(
                                     color: teal,
                                     fontSize: 12,
@@ -7230,6 +7230,13 @@ class _UpdateSettingCardState extends State<_UpdateSettingCard> {
     if (!opened && mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('无法打开下载地址')));
+      return;
+    }
+    if (opened && Platform.isMacOS) {
+      // Quit before the installer replaces the app bundle. The package also
+      // stops an existing copy as a fallback when opened outside the app.
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      exit(0);
     }
   }
 }
