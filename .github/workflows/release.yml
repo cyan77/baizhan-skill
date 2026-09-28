@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - main
+      - experiment/paddle-ocr
     tags:
       - "v*"
 
@@ -36,6 +37,32 @@ jobs:
 
       - name: Build Windows client
         run: flutter build windows --release
+
+      - name: Bundle PaddleOCR models
+        shell: pwsh
+        run: |
+          @'
+          import json
+          import pathlib
+          import shutil
+          from urllib.parse import urlparse
+          from urllib.request import url2pathname
+
+          config = pathlib.Path('.dart_tool/package_config.json').resolve()
+          packages = json.loads(config.read_text(encoding='utf-8'))['packages']
+          entry = next(item for item in packages if item['name'] == 'pp_ocr')
+          uri = entry['rootUri']
+          root = pathlib.Path(url2pathname(urlparse(uri).path)) if uri.startswith('file:') else (config.parent / uri).resolve()
+          source = root / 'model'
+          expected = ('det.onnx', 'inference.onnx', 'ppocr_v6_dict.txt')
+          for name in expected:
+              if not (source / name).is_file():
+                  raise FileNotFoundError(source / name)
+          dest = pathlib.Path('build/windows/x64/runner/Release/model')
+          dest.mkdir(parents=True, exist_ok=True)
+          for name in expected:
+              shutil.copy2(source / name, dest / name)
+          '@ | python -
 
       - name: Package Windows client
         shell: pwsh

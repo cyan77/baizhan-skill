@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:pp_ocr/pp_ocr.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -8934,10 +8935,17 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                                       ? () async {
                                           setState(() => importing = 'image');
                                           try {
-                                            final levels =
+                                            final comparison =
                                                 await pickCharacterImageLevels(
                                                     store, gender);
-                                            if (levels == null) return;
+                                            if (comparison == null ||
+                                                !context.mounted) return;
+                                            final levels = Platform.isWindows
+                                                ? await chooseCharacterImageOcr(
+                                                    context, comparison)
+                                                : comparison.system;
+                                            if (levels == null ||
+                                                !context.mounted) return;
                                             setState(() {
                                               if (character == null) {
                                                 importedLevels.clear();
@@ -9097,7 +9105,76 @@ Future<CharacterExcelData?> pickCharacterExcelData(int maxSkillRank) async {
           onTimeout: () => throw const FormatException('Excel 解析超时，请检查文件是否损坏'));
 }
 
-Future<Map<String, int>?> pickCharacterImageLevels(
+typedef CharacterImageOcrComparison = ({
+  Map<String, int> system,
+  String? systemError,
+  Map<String, int>? paddle,
+  String? paddleError,
+});
+
+Future<Map<String, int>?> chooseCharacterImageOcr(BuildContext context,
+    CharacterImageOcrComparison comparison) async {
+  final system = comparison.system;
+  final paddle = comparison.paddle;
+  final names = <String>{...system.keys, ...?paddle?.keys}.toList()..sort();
+  final differences = names.where((name) => system[name] != paddle?[name]).toList();
+  return showDialog<Map<String, int>>(
+      context: context,
+      builder: (context) => AlertDialog(
+          title: const Text('选择图片识别结果'),
+          content: SizedBox(
+              width: 480,
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text('系统识别 ${system.length} 项 · PaddleOCR ${paddle?.length ?? 0} 项',
+                    style: const TextStyle(fontSize: 13)),
+                if (comparison.systemError != null) ...[
+                  const SizedBox(height: 8),
+                  Text('系统识别暂不可用：${comparison.systemError}',
+                      style: const TextStyle(color: muted, fontSize: 12)),
+                ],
+                if (comparison.paddleError != null) ...[
+                  const SizedBox(height: 8),
+                  Text('PaddleOCR 暂不可用：${comparison.paddleError}',
+                      style: const TextStyle(color: muted, fontSize: 12)),
+                ] else ...[
+                  const SizedBox(height: 8),
+                  Text('两边有 ${differences.length} 项不同；数量多不代表识别更准确，请核对重数。',
+                      style: const TextStyle(color: muted, fontSize: 12)),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                      height: math.min(230.0, differences.length * 34.0),
+                      child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: differences.length,
+                          itemBuilder: (context, index) {
+                            final name = differences[index];
+                            String rank(int? value) =>
+                                value == null ? '未匹配' : '$value 重';
+                            return Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 6),
+                                child: Text('$name  系统 ${rank(system[name])} · '
+                                    'Paddle ${rank(paddle?[name])}',
+                                    style: const TextStyle(fontSize: 12)));
+                          })),
+                ],
+              ])),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('取消')),
+            OutlinedButton(
+                onPressed: system.isEmpty
+                    ? null : () => Navigator.pop(context, system),
+                child: const Text('使用系统结果')),
+            if (paddle != null)
+              FilledButton(
+                  onPressed: paddle.isEmpty
+                      ? null : () => Navigator.pop(context, paddle),
+                  child: const Text('使用 PaddleOCR 结果')),
+          ]));
+}
+
+Future<CharacterImageOcrComparison?> pickCharacterImageLevels(
     SkillStore store, String gender) async {
   final picked = await FilePicker.pickFiles(
       type: FileType.custom,
@@ -9128,7 +9205,8 @@ Future<Map<String, int>?> pickCharacterImageLevels(
     }
   }
   const channel = MethodChannel('baizhan_skill/ocr');
-  final List<dynamic> raw;
+  List<dynamic> raw = const [];
+  String? systemError;
   Future<List<dynamic>> recognize(String imagePath) async {
     if (!await File(imagePath).exists()) {
       throw FormatException('识别图片不存在：$imagePath');
@@ -9155,6 +9233,9 @@ Future<Map<String, int>?> pickCharacterImageLevels(
 
   try {
     raw = await recognizeWithFallback();
+  } catch (error) {
+    if (!Platform.isWindows) rethrow;
+    systemError = '$error';
   } finally {
     if (temporaryDirectory != null) {
       try {
@@ -9162,7 +9243,113 @@ Future<Map<String, int>?> pickCharacterImageLevels(
       } catch (_) {}
     }
   }
-  return parseCharacterImageOcr(raw, store, gender);
+  Map<String, int> parseOrEmpty(List<dynamic> lines) {
+    try {
+      return parseCharacterImageOcr(lines, store, gender);
+    } on FormatException {
+      return {};
+    }
+  }
+  final system = parseOrEmpty(raw);
+  if (!Platform.isWindows) {
+    if (system.isEmpty) throw const FormatException('没有识别到首领管理中的技能');
+    return (system: system, systemError: null,
+        paddle: null, paddleError: null);
+  }
+  try {
+    final paddleRaw = await Isolate.run(() => recognizePaddleImage(path));
+    final paddle = parseOrEmpty(paddleRaw);
+    if (system.isEmpty && paddle.isEmpty) {
+      throw const FormatException('两种方式均未识别到首领管理中的技能');
+    }
+    return (system: system, systemError: systemError,
+        paddle: paddle, paddleError: null);
+  } catch (error) {
+    if (system.isEmpty) {
+      throw FormatException('两种图片识别方式均不可用：$error');
+    }
+    return (system: system, systemError: systemError,
+        paddle: null, paddleError: '$error');
+  }
+}
+
+Future<List<Map<String, Object>>> recognizePaddleImage(String path) async {
+  final modelDir = Directory(Platform.environment['BAIZHAN_OCR_MODEL_DIR'] ??
+      '${File(Platform.resolvedExecutable).parent.path}${Platform.pathSeparator}model');
+  final det = File('${modelDir.path}${Platform.pathSeparator}det.onnx');
+  final rec = File('${modelDir.path}${Platform.pathSeparator}inference.onnx');
+  final dict = File('${modelDir.path}${Platform.pathSeparator}ppocr_v6_dict.txt');
+  if (![det, rec, dict].every((file) => file.existsSync())) {
+    throw const FormatException('缺少 PaddleOCR 模型文件');
+  }
+  final ocr = PaddleOcr();
+  Directory? temp;
+  try {
+    final initialized = await ocr.initialize(
+        detModelPath: det.path, recModelPath: rec.path, dictPath: dict.path);
+    if (!initialized) throw const FormatException('PaddleOCR 模型初始化失败');
+    final segments = <({String file, int top, int height, double scale})>[];
+    var sourceWidth = 0;
+    var sourceHeight = 0;
+    final sourceFile = File(path);
+    if (sourceFile.lengthSync() <= 5 * 1024 * 1024) {
+      final source = img.decodeImage(sourceFile.readAsBytesSync());
+      sourceWidth = source?.width ?? 0;
+      sourceHeight = source?.height ?? 0;
+      if (source != null && source.width < 900 && source.height > 700) {
+        temp = Directory.systemTemp.createTempSync('baizhan_paddle_');
+        for (var top = 0; top < source.height;) {
+          final height = math.min(480, source.height - top);
+          final crop = img.copyCrop(source,
+              x: 0, y: top, width: source.width, height: height);
+          final resized = img.copyResize(crop, width: 900,
+              interpolation: img.Interpolation.cubic);
+          final file = '${temp.path}${Platform.pathSeparator}part_$top.png';
+          File(file).writeAsBytesSync(img.encodePng(resized));
+          segments.add((file: file, top: top, height: height,
+              scale: resized.width / source.width));
+          if (top + height >= source.height) break;
+          top += height - 48;
+        }
+      }
+    }
+    if (segments.isEmpty) {
+      segments.add((file: path, top: 0, height: 0, scale: 1));
+    }
+    final result = <Map<String, Object>>[];
+    for (final segment in segments) {
+      final recognized = await ocr.recognizeImage(segment.file);
+      for (final line in recognized) {
+        if (line.box.isEmpty) continue;
+        final x = line.box.map((point) => point.dx).reduce((a, b) => a + b)
+            / line.box.length;
+        final y = line.box.map((point) => point.dy).reduce((a, b) => a + b)
+            / line.box.length;
+        if (segment.height > 0) {
+          final originalY = y / segment.scale;
+          if ((segment.top > 0 && originalY < 24) ||
+              (segment.top + segment.height <
+                  segments.last.top + segments.last.height &&
+                  originalY > segment.height - 24)) continue;
+        }
+        if (sourceWidth == 0 || sourceHeight == 0) {
+          result.add({'text': line.text});
+        } else {
+          result.add({'text': line.text,
+            'x': segment.height == 0 ? x / sourceWidth : x / 900,
+            'y': segment.height == 0 ? y / sourceHeight :
+                (segment.top + y / segment.scale) / sourceHeight});
+        }
+      }
+    }
+    if (sourceHeight > 0) {
+      result.sort((a, b) => (a['y'] as double).compareTo(b['y'] as double));
+    }
+    return result;
+  } finally {
+    ocr.dispose();
+    try { temp?.deleteSync(recursive: true); } catch (_) {}
+  }
 }
 
 String? _prepareOcrImage(String path) {
