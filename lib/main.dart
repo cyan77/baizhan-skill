@@ -598,6 +598,7 @@ class SkillStore extends ChangeNotifier {
   int? pendingSkillPageMaxRank;
   final Map<int, ({String characterId, int maxRank, String query})>
       skillPageFilters = {};
+  final Set<int> manuallySelectedSkillPageCharacters = {};
   final Map<int, Set<String>> skillPageResults = {};
   int? temporarySkillPage;
   final Set<int> discardSkillFiltersOnDispose = {};
@@ -1609,6 +1610,7 @@ class SkillStore extends ChangeNotifier {
 
   void openSkillPage(int targetPage, String characterId) {
     skillPageFilters.remove(targetPage);
+    manuallySelectedSkillPageCharacters.remove(targetPage);
     skillPageResults.remove(targetPage);
     temporarySkillPage = targetPage;
     pendingSkillPageCharacterId = characterId;
@@ -5538,7 +5540,9 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
     super.initState();
     final saved = widget.store.skillPageFilters[3];
     characterId = widget.store.pendingSkillPageCharacterId ??
-        saved?.characterId ??
+        (widget.store.manuallySelectedSkillPageCharacters.contains(3)
+            ? saved?.characterId
+            : null) ??
         (widget.store.selectedCharacterId.isNotEmpty
             ? widget.store.selectedCharacterId
             : 'all');
@@ -5555,7 +5559,9 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
 
   @override
   void dispose() {
-    if (!widget.store.discardSkillFiltersOnDispose.remove(3)) {
+    if (widget.store.discardSkillFiltersOnDispose.remove(3)) {
+      widget.store.manuallySelectedSkillPageCharacters.remove(3);
+    } else {
       widget.store.skillPageFilters[3] =
           (characterId: characterId, maxRank: maxRank, query: bossQuery.text);
     }
@@ -5654,9 +5660,7 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
         : characters.firstWhere((item) => item.id == effectiveCharacterId,
             orElse: () => characters.first);
     final visibleBosses = filteredBosses;
-    final progressCharacters = effectiveCharacterId == 'all'
-        ? characters
-        : characters.where((item) => item.id == effectiveCharacterId).toList();
+    final progressCharacters = characters;
     final progressBosses = onlyIncomplete
         ? visibleBosses
             .where((boss) => progressCharacters.any((item) {
@@ -5690,17 +5694,9 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
               onSelectionChanged: (value) => setState(() {
                     showBossProgress = value.first;
                     if (showBossProgress) {
-                      characterId = 'all';
                       maxRank = 0;
                       widget.store.skillPageResults.remove(3);
                     }
-                  })),
-          const SizedBox(height: 12),
-          CharacterSwitcher(
-              store: widget.store,
-              onSelected: (value) => setState(() {
-                    characterId = value;
-                    widget.store.skillPageResults.remove(3);
                   })),
           if (!showBossProgress) ...[
             const SizedBox(height: 10),
@@ -5720,8 +5716,34 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
           ],
           const SizedBox(height: 12),
           LayoutBuilder(builder: (context, constraints) {
-            final width = _filterItemWidth(constraints.maxWidth, 2);
+            final width = _filterItemWidth(
+                constraints.maxWidth, showBossProgress ? 2 : 3);
             return Wrap(spacing: 10, runSpacing: 10, children: [
+              if (!showBossProgress)
+                _FilterDropdown<String>(
+                    value: effectiveCharacterId,
+                    values: [
+                      'all',
+                      ...characters.map((character) => character.id)
+                    ],
+                    itemLabel: (value) => value == 'all'
+                        ? '全部角色'
+                        : characters
+                            .firstWhere((character) => character.id == value)
+                            .name,
+                    compactLabel: (value) => value == 'all'
+                        ? '角色'
+                        : characters
+                            .firstWhere((character) => character.id == value)
+                            .name,
+                    width: width,
+                    searchable: true,
+                    onChanged: (value) => setState(() {
+                          characterId = value ?? 'all';
+                          widget.store.manuallySelectedSkillPageCharacters
+                              .add(3);
+                          widget.store.skillPageResults.remove(3);
+                        })),
               _NameAutocomplete(
                   controller: bossQuery,
                   names: widget.store.bosses.map((boss) => boss.name).toList(),

@@ -308,14 +308,16 @@ void main() {
     await tester.pumpWidget(
         MaterialApp(home: Scaffold(body: AllSkillsPage(store: store))));
     await tester.pumpAndSettle();
+    expect(find.text('全部角色'), findsOneWidget);
     await tester.tap(find.text('首领进度'));
     await tester.pumpAndSettle();
 
+    expect(find.text('全部角色'), findsNothing);
     expect(find.textContaining('1/2 个角色已全部收集'), findsOneWidget);
     await tester.tap(find.text('进度视图首领'));
     await tester.pumpAndSettle();
-    expect(find.text('完整角色'), findsWidgets);
-    expect(find.text('缺失角色'), findsWidgets);
+    expect(find.text('完整角色'), findsOneWidget);
+    expect(find.text('缺失角色'), findsOneWidget);
     expect(find.text('进度技能一'), findsOneWidget);
     expect(find.text('进度技能二'), findsOneWidget);
     expect(find.text('2/2'), findsOneWidget);
@@ -323,6 +325,49 @@ void main() {
     await tester.tap(find.text('只看未完成'));
     await tester.pumpAndSettle();
     expect(find.textContaining('0/1 个角色已全部收集'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('all skills character filter follows home until changed manually',
+      (tester) async {
+    final store = SkillStore();
+    store.characters.addAll([
+      CharacterData(
+          id: 'home-character',
+          name: '首页角色',
+          gender: '女性',
+          school: '万花',
+          mind: '花间游',
+          position: '输出',
+          levels: const {}),
+      CharacterData(
+          id: 'manual-character',
+          name: '手动角色',
+          gender: '男性',
+          school: '天策',
+          mind: '傲血战意',
+          position: '输出',
+          levels: const {})
+    ]);
+    store.selectedCharacterId = 'home-character';
+    store.skillPageFilters[3] =
+        (characterId: 'manual-character', maxRank: 0, query: '');
+
+    await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: AllSkillsPage(store: store))));
+    await tester.pumpAndSettle();
+    expect(find.text('首页角色'), findsOneWidget);
+    expect(find.text('手动角色'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
+    store.manuallySelectedSkillPageCharacters.add(3);
+    store.skillPageFilters[3] =
+        (characterId: 'manual-character', maxRank: 0, query: '');
+    await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: AllSkillsPage(store: store))));
+    await tester.pumpAndSettle();
+    expect(find.text('手动角色'), findsOneWidget);
+    expect(find.text('首页角色'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
