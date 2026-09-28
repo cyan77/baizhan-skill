@@ -5162,6 +5162,7 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
   final _matrixKey = GlobalKey();
   String characterId = 'all';
   int maxRank = 0;
+  bool onlyIncomplete = false;
   ScrollController? _verticalController;
   double _rootInitialTop = 0;
   double _matrixStart = double.infinity;
@@ -5331,6 +5332,107 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
   @override
   Widget build(BuildContext context) {
     final characters = filteredCharacters;
+    final matchingSkills = filteredSkills;
+    final skills = onlyIncomplete
+        ? matchingSkills
+            .where((name) => characters.any((character) =>
+                widget.store.skillLevelForName(character.id, name) <
+                widget.store.maxSkillRank))
+            .toList()
+        : matchingSkills;
+    return LayoutBuilder(builder: (context, constraints) {
+      final width = _filterItemWidth(constraints.maxWidth, 3);
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Wrap(spacing: 10, runSpacing: 10, children: [
+          _FilterDropdown<String>(
+              value: effectiveCharacterId,
+              values: [
+                'all',
+                ...widget.store.activeCharacters.map((item) => item.id)
+              ],
+              itemLabel: (value) => value == 'all'
+                  ? '全部角色'
+                  : widget.store.activeCharacters
+                      .firstWhere((item) => item.id == value)
+                      .name,
+              compactLabel: (value) => value == 'all'
+                  ? '角色'
+                  : widget.store.activeCharacters
+                      .firstWhere((item) => item.id == value)
+                      .name,
+              width: width,
+              searchable: true,
+              onChanged: (value) => setState(() {
+                    characterId = value ?? 'all';
+                    widget.store.skillPageResults.remove(widget.pageId);
+                  })),
+          _NameAutocomplete(
+              controller: skillQuery,
+              names: widget.skillNames,
+              width: width,
+              hint: '技能名称',
+              compactHint: '技能'),
+          _FilterDropdown<int>(
+              value: maxRank,
+              values: [
+                0,
+                ...List.generate(widget.store.maxSkillRank,
+                    (index) => widget.store.maxSkillRank - index)
+              ],
+              itemLabel: (value) => value == 0 ? '全部重数' : '$value 重及以下',
+              compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
+              width: width,
+              onChanged: (value) => setState(() {
+                    maxRank = value ?? maxRank;
+                    widget.store.skillPageResults.remove(widget.pageId);
+                  }))
+        ]),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(
+              child: Text('技能 ${skills.length} 个 · 角色 ${characters.length} 个',
+                  style: TextStyle(
+                      color: widget.accent,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600))),
+          const SizedBox(width: 12),
+          FilterChip(
+              selected: onlyIncomplete,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 7),
+              selectedColor: const Color(0xffe1f1ea),
+              side: const BorderSide(color: line),
+              avatar: const Icon(Icons.pending_actions_outlined, size: 16),
+              label: const Text('只看未完成'),
+              onSelected: (value) => setState(() => onlyIncomplete = value))
+        ]),
+        const SizedBox(height: 12),
+        if (characters.isEmpty)
+          const CardShell(
+              child: Text('没有符合条件的角色', style: TextStyle(color: muted)))
+        else if (skills.isEmpty)
+          const CardShell(
+              child: Text('没有符合条件的技能', style: TextStyle(color: muted)))
+        else
+          ...skills.map((name) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _FeaturedSkillProgressCard(
+                  store: widget.store,
+                  skillName: name,
+                  characters: characters,
+                  accent: widget.accent,
+                  onDelete: widget.onDeleteSkill == null
+                      ? null
+                      : () => widget.onDeleteSkill!(name))))
+      ]);
+    });
+  }
+
+  // Kept temporarily as a fallback while the progress-card view settles.
+  // ignore: unused_element
+  Widget _buildLegacyMatrix(BuildContext context) {
+    final characters = filteredCharacters;
     final skills = filteredSkills;
     return LayoutBuilder(builder: (context, constraints) {
       final viewportWidth = constraints.maxWidth;
@@ -5469,6 +5571,127 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
                       })))
       ]);
     });
+  }
+}
+
+class _FeaturedSkillProgressCard extends StatefulWidget {
+  const _FeaturedSkillProgressCard(
+      {required this.store,
+      required this.skillName,
+      required this.characters,
+      required this.accent,
+      this.onDelete});
+
+  final SkillStore store;
+  final String skillName;
+  final List<CharacterData> characters;
+  final Color accent;
+  final VoidCallback? onDelete;
+
+  @override
+  State<_FeaturedSkillProgressCard> createState() =>
+      _FeaturedSkillProgressCardState();
+}
+
+class _FeaturedSkillProgressCardState
+    extends State<_FeaturedSkillProgressCard> {
+  bool expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final completed = widget.characters
+        .where((character) =>
+            widget.store.skillLevelForName(character.id, widget.skillName) >=
+            widget.store.maxSkillRank)
+        .length;
+    final total = widget.characters.length;
+    final ratio = total == 0 ? 0.0 : completed / total;
+    return CardShell(
+        padding: EdgeInsets.zero,
+        child: Column(children: [
+          InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: () => setState(() => expanded = !expanded),
+              child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  child: Row(children: [
+                    Icon(expanded
+                        ? Icons.keyboard_arrow_down
+                        : Icons.keyboard_arrow_right),
+                    const SizedBox(width: 6),
+                    Expanded(
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                          Text(widget.skillName,
+                              style: TextStyle(
+                                  color: widget.accent,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 3),
+                          Text('$completed/$total 个角色已全部收集',
+                              style:
+                                  const TextStyle(color: muted, fontSize: 12))
+                        ])),
+                    SizedBox(
+                        width: 100,
+                        child: LinearProgressIndicator(
+                            value: ratio,
+                            minHeight: 7,
+                            borderRadius: BorderRadius.circular(8),
+                            backgroundColor: const Color(0xffedf1ef),
+                            color: widget.accent)),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                        width: 44,
+                        child: Text('${(ratio * 100).round()}%',
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                                color: widget.accent,
+                                fontWeight: FontWeight.w800))),
+                    if (widget.onDelete != null) ...[
+                      const SizedBox(width: 6),
+                      IconButton(
+                          tooltip: '移除重要技能',
+                          icon: const Icon(Icons.delete_outline, size: 18),
+                          color: muted,
+                          onPressed: widget.onDelete)
+                    ]
+                  ]))),
+          if (expanded) ...[
+            const Divider(height: 1, color: line),
+            ...widget.characters.map((character) {
+              final rank = widget.store
+                  .skillLevelForName(character.id, widget.skillName);
+              return InkWell(
+                  onTap: () async {
+                    await showSkillRankDialog(
+                        context, widget.store, character, widget.skillName,
+                        displayName: widget.skillName);
+                    if (mounted) setState(() {});
+                  },
+                  child: Container(
+                      height: 50,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      decoration: const BoxDecoration(
+                          border: Border(bottom: BorderSide(color: line))),
+                      child: Row(children: [
+                        MindAvatar(character: character, radius: 14),
+                        const SizedBox(width: 8),
+                        Expanded(
+                            child: Text(character.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    color: ink,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700))),
+                        RankBadge(rank: rank, plain: true)
+                      ])));
+            })
+          ]
+        ]));
   }
 }
 
