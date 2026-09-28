@@ -7189,6 +7189,14 @@ class _UpdateSettingCardState extends State<_UpdateSettingCard> {
                               '当前版本 v$currentVersion · 最新版本 v${release.version}',
                               style:
                                   const TextStyle(color: muted, fontSize: 12)),
+                          if (Platform.isMacOS) ...[
+                            const SizedBox(height: 10),
+                            const Text('安装更新时会关闭当前应用，并在安装完成后自动打开新版本。',
+                                style: TextStyle(
+                                    color: teal,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600))
+                          ],
                           if (release.notes.trim().isNotEmpty) ...[
                             const SizedBox(height: 14),
                             const Text('更新内容',

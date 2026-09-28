@@ -104,7 +104,9 @@ jobs:
         run: |
           app_path="build/macos/Build/Products/Release/百战异闻录助手.app"
           test -d "$app_path"
-          pkgbuild --component "$app_path" --install-location /Applications --identifier lynn.game.jx3.baizhan --version "$APP_VERSION" "BaizhanSkill-macOS-Setup.pkg"
+          test -x macos/packaging/scripts/preinstall
+          test -x macos/packaging/scripts/postinstall
+          COPYFILE_DISABLE=1 pkgbuild --component "$app_path" --install-location /Applications --scripts macos/packaging/scripts --identifier lynn.game.jx3.baizhan --version "$APP_VERSION" "BaizhanSkill-macOS-Setup.pkg"
 
       - name: Upload macOS workflow artifact
         uses: actions/upload-artifact@v4
