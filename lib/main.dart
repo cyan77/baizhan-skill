@@ -9257,7 +9257,7 @@ Future<CharacterImageOcrComparison?> pickCharacterImageLevels(
         paddle: null, paddleError: null);
   }
   try {
-    final paddleRaw = await Isolate.run(() => recognizePaddleImage(path));
+    final paddleRaw = await recognizePaddleImageInIsolate(path);
     final paddle = parseOrEmpty(paddleRaw);
     if (system.isEmpty && paddle.isEmpty) {
       throw const FormatException('两种方式均未识别到首领管理中的技能');
@@ -9272,6 +9272,9 @@ Future<CharacterImageOcrComparison?> pickCharacterImageLevels(
         paddle: null, paddleError: '$error');
   }
 }
+
+Future<List<Map<String, Object>>> recognizePaddleImageInIsolate(String path) =>
+    Isolate.run(() => recognizePaddleImage(path));
 
 Future<List<Map<String, Object>>> recognizePaddleImage(String path) async {
   final modelDir = Directory(Platform.environment['BAIZHAN_OCR_MODEL_DIR'] ??
