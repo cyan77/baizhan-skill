@@ -72,11 +72,16 @@ void main() {
     store.setNavigationConfiguration(
         ['bosses', 'characters', 'all', 'featured'],
         {'bosses', 'all'},
-        {'bosses': '首领技能'});
+        {'bosses': '首领设置'});
 
     expect(store.navigationOrder.first, 'bosses');
     expect(store.navigationVisible, {'bosses', 'all'});
-    expect(store.navigationLabels['bosses'], '首领技能');
+    expect(store.navigationLabels['bosses'], '首领设置');
+    expect(
+        navigationPageOptions.firstWhere((item) => item.id == 'featured').label,
+        '关注技能');
+    expect(navigationPageOptions.firstWhere((item) => item.id == 'all').label,
+        '首领技能');
   });
 
   test('legacy skill navigation is merged into one entry', () async {

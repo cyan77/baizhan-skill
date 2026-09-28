@@ -217,11 +217,11 @@ class NavigationPageOption {
 const navigationPageOptions = <NavigationPageOption>[
   NavigationPageOption(
       id: 'featured',
-      label: '技能汇总',
+      label: '关注技能',
       icon: Icons.auto_awesome_outlined,
       page: 1),
   NavigationPageOption(
-      id: 'all', label: '所有技能', icon: Icons.account_tree_outlined, page: 3),
+      id: 'all', label: '首领技能', icon: Icons.account_tree_outlined, page: 3),
   NavigationPageOption(
       id: 'characters', label: '角色管理', icon: Icons.groups_outlined, page: 5),
   NavigationPageOption(
@@ -2445,7 +2445,7 @@ class _AppUpdateBanner extends StatelessWidget {
 class Shell extends StatelessWidget {
   const Shell({required this.store, super.key});
   final SkillStore store;
-  static const pageTitles = ['首页', '技能汇总', '技能汇总', '所有技能汇总', '设置'];
+  static const pageTitles = ['首页', '关注技能', '关注技能', '首领技能', '设置'];
   @override
   Widget build(BuildContext context) => LayoutBuilder(
         builder: (context, constraints) {
@@ -2486,11 +2486,11 @@ class Shell extends StatelessWidget {
                       NavigationDestination(
                           icon: Icon(Icons.auto_awesome_outlined),
                           selectedIcon: Icon(Icons.auto_awesome),
-                          label: '技能汇总'),
+                          label: '关注技能'),
                       NavigationDestination(
                           icon: Icon(Icons.account_tree_outlined),
                           selectedIcon: Icon(Icons.account_tree),
-                          label: '所有技能'),
+                          label: '首领技能'),
                       NavigationDestination(
                           icon: Icon(Icons.settings_outlined),
                           selectedIcon: Icon(Icons.settings),
@@ -5500,7 +5500,7 @@ class _FeaturedSkillsPageState extends State<FeaturedSkillsPage> {
         .length;
     final important = selectedTab == 0;
     return PageBody(
-        title: '技能汇总',
+        title: '关注技能',
         action: important
             ? FilledButton.icon(
                 onPressed: () => showImportantDialog(context, store),
@@ -5720,7 +5720,7 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
             .toList()
         : visibleBosses;
     return PageBody(
-        title: '所有技能汇总',
+        title: '首领技能',
         action: Text(
             '${showBossProgress ? progressBosses.length : visibleBosses.length} 个首领',
             style: const TextStyle(color: teal, fontWeight: FontWeight.w600)),
