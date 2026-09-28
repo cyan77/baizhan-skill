@@ -5341,14 +5341,7 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
   @override
   Widget build(BuildContext context) {
     final characters = filteredCharacters;
-    final matchingSkills = filteredSkills;
-    final skills = onlyIncomplete
-        ? matchingSkills
-            .where((name) => characters.any((character) =>
-                widget.store.skillLevelForName(character.id, name) <
-                widget.store.maxSkillRank))
-            .toList()
-        : matchingSkills;
+    final skills = filteredSkills;
     return LayoutBuilder(builder: (context, constraints) {
       final width = _filterItemWidth(constraints.maxWidth, 3);
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -5429,8 +5422,15 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
               child: _FeaturedSkillProgressCard(
                   store: widget.store,
                   skillName: name,
-                  characters: characters,
+                  characters: onlyIncomplete
+                      ? characters
+                          .where((character) => widget.store.skillLevelForName(
+                                  character.id, name) <
+                              widget.store.maxSkillRank)
+                          .toList()
+                      : characters,
                   accent: widget.accent,
+                  onProgressChanged: () => setState(() {}),
                   onDelete: widget.onDeleteSkill == null
                       ? null
                       : () => widget.onDeleteSkill!(name))))
@@ -5589,12 +5589,14 @@ class _FeaturedSkillProgressCard extends StatefulWidget {
       required this.skillName,
       required this.characters,
       required this.accent,
+      required this.onProgressChanged,
       this.onDelete});
 
   final SkillStore store;
   final String skillName;
   final List<CharacterData> characters;
   final Color accent;
+  final VoidCallback onProgressChanged;
   final VoidCallback? onDelete;
 
   @override
@@ -5678,7 +5680,7 @@ class _FeaturedSkillProgressCardState
                     await showSkillRankDialog(
                         context, widget.store, character, widget.skillName,
                         displayName: widget.skillName);
-                    if (mounted) setState(() {});
+                    if (mounted) widget.onProgressChanged();
                   },
                   child: Container(
                       height: 50,
@@ -5722,7 +5724,7 @@ class _FeaturedSkillProgressCardState
                                                               character.id,
                                                               widget.skillName,
                                                               rank + 1);
-                                                      setState(() {});
+                                                      widget.onProgressChanged();
                                                     }
                                                   : null),
                                           _RankStepButton(
@@ -5735,7 +5737,7 @@ class _FeaturedSkillProgressCardState
                                                               character.id,
                                                               widget.skillName,
                                                               rank - 1);
-                                                      setState(() {});
+                                                      widget.onProgressChanged();
                                                     }
                                                   : null)
                                         ])
