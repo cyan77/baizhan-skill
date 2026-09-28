@@ -9242,12 +9242,20 @@ Map<String, int> parseCharacterImageOcr(
         (left['y'] as num).compareTo(right['y'] as num));
   final rankPositions = <(double, int)>[];
   var lastHeader = 10;
+  var lastHeaderY = 0.0;
   for (final item in positioned) {
     final header = rankHeaders[normalize(item['text']?.toString() ?? '')];
     if (header == null || (item['x'] as num) > 0.18) continue;
-    if (header <= lastHeader && lastHeader - header <= 2) {
-      rankPositions.add(((item['y'] as num).toDouble(), header));
+    final y = (item['y'] as num).toDouble();
+    final skippedRanks = lastHeader - header;
+    // The screenshot may omit intermediate sections (for example 四重 to
+    // 一重). Accept a larger downward jump when there is enough vertical space
+    // between headings; a false 一重 immediately after 十重 stays rejected.
+    if (skippedRanks >= 0 &&
+        (skippedRanks <= 2 || y - lastHeaderY >= skippedRanks * 0.025)) {
+      rankPositions.add((y, header));
       lastHeader = header;
+      lastHeaderY = y;
     }
   }
   final ordered = positioned.length == raw.whereType<Map>().length

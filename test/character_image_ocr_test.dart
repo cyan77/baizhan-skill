@@ -69,4 +69,20 @@ void main() {
     expect(result['火魅指'], 9);
     expect(result['画影飞赴'], 8);
   });
+
+  test('accepts a late one-rank heading when middle headings are missing', () {
+    final result = parseCharacterImageOcr([
+      {'text': '十重', 'x': 0.06, 'y': 0.02},
+      {'text': '一重', 'x': 0.06, 'y': 0.05}, // Implausible misread.
+      {'text': '万花金创药', 'x': 0.30, 'y': 0.08},
+      {'text': '四重', 'x': 0.06, 'y': 0.30},
+      {'text': '火魅指', 'x': 0.30, 'y': 0.35},
+      {'text': '一重', 'x': 0.06, 'y': 0.95},
+      {'text': '画影飞赴', 'x': 0.30, 'y': 0.98},
+    ], testStore(), '女性');
+
+    expect(result['万花金创药'], 10);
+    expect(result['火魅指'], 4);
+    expect(result['画影飞赴'], 1);
+  });
 }
