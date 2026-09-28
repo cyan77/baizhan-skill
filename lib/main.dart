@@ -6590,36 +6590,6 @@ class _AllSkillsTableState extends State<_AllSkillsTable> {
                                   ? null
                                   : widget.store
                                       .level(widget.character!.id, skill.id),
-                              onIncreaseRank: widget.character != null &&
-                                      widget.store.level(
-                                              widget.character!.id, skill.id) <
-                                          widget.store.maxSkillRank
-                                  ? () {
-                                      final rank = widget.store.level(
-                                          widget.character!.id, skill.id);
-                                      widget.store.setLevelForSkillName(
-                                          widget.character!.id,
-                                          skill.name,
-                                          rank + 1);
-                                      setState(() {});
-                                      widget.onChanged();
-                                    }
-                                  : null,
-                              onDecreaseRank: widget.character != null &&
-                                      widget.store.level(
-                                              widget.character!.id, skill.id) >
-                                          0
-                                  ? () {
-                                      final rank = widget.store.level(
-                                          widget.character!.id, skill.id);
-                                      widget.store.setLevelForSkillName(
-                                          widget.character!.id,
-                                          skill.name,
-                                          rank - 1);
-                                      setState(() {});
-                                      widget.onChanged();
-                                    }
-                                  : null,
                               collection: ''))
                 ]
               ]))));
@@ -6635,9 +6605,7 @@ class _AllSkillsTableRow extends StatelessWidget {
       this.stamina,
       this.bossRow = false,
       this.expanded = false,
-      this.nameColor = ink,
-      this.onIncreaseRank,
-      this.onDecreaseRank});
+      this.nameColor = ink});
   final String name;
   final int? rank;
   final String? rankText;
@@ -6647,8 +6615,6 @@ class _AllSkillsTableRow extends StatelessWidget {
   final bool bossRow;
   final bool expanded;
   final Color nameColor;
-  final VoidCallback? onIncreaseRank;
-  final VoidCallback? onDecreaseRank;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -6684,33 +6650,18 @@ class _AllSkillsTableRow extends StatelessWidget {
                 ]))),
         Expanded(
             flex: 2,
-            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Text(
-                  rankText ??
-                      (rank == null
-                          ? '—'
-                          : rank == 0
-                              ? (bossRow ? '未完成' : '未学')
-                              : '$rank 重'),
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      color: bossRow ? teal : ink,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700)),
-              if (!bossRow && rank != null) ...[
-                const SizedBox(width: 5),
-                Column(mainAxisSize: MainAxisSize.min, children: [
-                  _RankStepButton(
-                      icon: Icons.keyboard_arrow_up,
-                      tooltip: '增加一重',
-                      onPressed: onIncreaseRank),
-                  _RankStepButton(
-                      icon: Icons.keyboard_arrow_down,
-                      tooltip: '减少一重',
-                      onPressed: onDecreaseRank)
-                ])
-              ]
-            ])),
+            child: Text(
+                rankText ??
+                    (rank == null
+                        ? '—'
+                        : rank == 0
+                            ? (bossRow ? '未完成' : '未学')
+                            : '$rank 重'),
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: bossRow ? teal : ink,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700))),
         Expanded(
             flex: 2,
             child: Text(collection,
