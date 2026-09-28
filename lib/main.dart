@@ -5679,7 +5679,8 @@ class _FeaturedSkillProgressCardState
                       child: Row(children: [
                         MindAvatar(character: character, radius: 14),
                         const SizedBox(width: 8),
-                        Expanded(
+                        Flexible(
+                            fit: FlexFit.loose,
                             child: Text(character.name,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -5687,7 +5688,36 @@ class _FeaturedSkillProgressCardState
                                     color: ink,
                                     fontSize: 12,
                                     fontWeight: FontWeight.w700))),
-                        RankBadge(rank: rank, plain: true)
+                        const SizedBox(width: 14),
+                        RankBadge(rank: rank, plain: true),
+                        const SizedBox(width: 5),
+                        Column(mainAxisSize: MainAxisSize.min, children: [
+                          _RankStepButton(
+                              icon: Icons.keyboard_arrow_up,
+                              tooltip: '增加一重',
+                              onPressed: rank < widget.store.maxSkillRank
+                                  ? () {
+                                      widget.store.setLevelForSkillName(
+                                          character.id,
+                                          widget.skillName,
+                                          rank + 1);
+                                      setState(() {});
+                                    }
+                                  : null),
+                          _RankStepButton(
+                              icon: Icons.keyboard_arrow_down,
+                              tooltip: '减少一重',
+                              onPressed: rank > 0
+                                  ? () {
+                                      widget.store.setLevelForSkillName(
+                                          character.id,
+                                          widget.skillName,
+                                          rank - 1);
+                                      setState(() {});
+                                    }
+                                  : null)
+                        ]),
+                        const Spacer()
                       ])));
             })
           ]
@@ -6560,6 +6590,36 @@ class _AllSkillsTableState extends State<_AllSkillsTable> {
                                   ? null
                                   : widget.store
                                       .level(widget.character!.id, skill.id),
+                              onIncreaseRank: widget.character != null &&
+                                      widget.store.level(
+                                              widget.character!.id, skill.id) <
+                                          widget.store.maxSkillRank
+                                  ? () {
+                                      final rank = widget.store.level(
+                                          widget.character!.id, skill.id);
+                                      widget.store.setLevelForSkillName(
+                                          widget.character!.id,
+                                          skill.name,
+                                          rank + 1);
+                                      setState(() {});
+                                      widget.onChanged();
+                                    }
+                                  : null,
+                              onDecreaseRank: widget.character != null &&
+                                      widget.store.level(
+                                              widget.character!.id, skill.id) >
+                                          0
+                                  ? () {
+                                      final rank = widget.store.level(
+                                          widget.character!.id, skill.id);
+                                      widget.store.setLevelForSkillName(
+                                          widget.character!.id,
+                                          skill.name,
+                                          rank - 1);
+                                      setState(() {});
+                                      widget.onChanged();
+                                    }
+                                  : null,
                               collection: ''))
                 ]
               ]))));
@@ -6575,7 +6635,9 @@ class _AllSkillsTableRow extends StatelessWidget {
       this.stamina,
       this.bossRow = false,
       this.expanded = false,
-      this.nameColor = ink});
+      this.nameColor = ink,
+      this.onIncreaseRank,
+      this.onDecreaseRank});
   final String name;
   final int? rank;
   final String? rankText;
@@ -6585,6 +6647,8 @@ class _AllSkillsTableRow extends StatelessWidget {
   final bool bossRow;
   final bool expanded;
   final Color nameColor;
+  final VoidCallback? onIncreaseRank;
+  final VoidCallback? onDecreaseRank;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -6620,18 +6684,33 @@ class _AllSkillsTableRow extends StatelessWidget {
                 ]))),
         Expanded(
             flex: 2,
-            child: Text(
-                rankText ??
-                    (rank == null
-                        ? '—'
-                        : rank == 0
-                            ? (bossRow ? '未完成' : '未学')
-                            : '$rank 重'),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                    color: bossRow ? teal : ink,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700))),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Text(
+                  rankText ??
+                      (rank == null
+                          ? '—'
+                          : rank == 0
+                              ? (bossRow ? '未完成' : '未学')
+                              : '$rank 重'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: bossRow ? teal : ink,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700)),
+              if (!bossRow && rank != null) ...[
+                const SizedBox(width: 5),
+                Column(mainAxisSize: MainAxisSize.min, children: [
+                  _RankStepButton(
+                      icon: Icons.keyboard_arrow_up,
+                      tooltip: '增加一重',
+                      onPressed: onIncreaseRank),
+                  _RankStepButton(
+                      icon: Icons.keyboard_arrow_down,
+                      tooltip: '减少一重',
+                      onPressed: onDecreaseRank)
+                ])
+              ]
+            ])),
         Expanded(
             flex: 2,
             child: Text(collection,
@@ -8171,13 +8250,21 @@ class _RankStepButton extends StatelessWidget {
   final VoidCallback? onPressed;
   @override
   Widget build(BuildContext context) => SizedBox(
-      width: 28,
-      height: 23,
+      width: 25,
+      height: 20,
       child: IconButton(
           tooltip: tooltip,
           onPressed: onPressed,
           padding: EdgeInsets.zero,
-          iconSize: 20,
+          constraints: const BoxConstraints.tightFor(width: 25, height: 20),
+          style: IconButton.styleFrom(
+              foregroundColor: teal,
+              disabledForegroundColor: muted.withValues(alpha: .35),
+              backgroundColor: const Color(0xffedf7f3),
+              disabledBackgroundColor: const Color(0xfff5f7f6),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6))),
+          iconSize: 17,
           icon: Icon(icon)));
 }
 
