@@ -395,14 +395,22 @@ void main() {
         MaterialApp(home: Scaffold(body: AllSkillsPage(store: store))));
     await tester.pumpAndSettle();
     expect(find.text('全部角色'), findsOneWidget);
+    final skillDescription = tester.getRect(find.text('切换角色后可按首领和技能重数筛选。'));
+    final bulkButton = tester.getRect(find.byIcon(Icons.layers_outlined));
+    expect(
+        (skillDescription.center.dy - bulkButton.center.dy).abs(), lessThan(2));
     await tester.tap(find.text('首领进度'));
     await tester.pumpAndSettle();
 
-    expect(find.text('全部角色'), findsNothing);
+    expect(find.text('全部角色'), findsOneWidget);
     expect(find.text('全部类型'), findsOneWidget);
     final incompleteChip = tester.getRect(find.byType(FilterChip));
     expect(incompleteChip.width, lessThanOrEqualTo(138));
     expect(incompleteChip.height, lessThanOrEqualTo(42));
+    final progressDescription =
+        tester.getRect(find.text('按首领查看 2 个角色的技能收集情况，点击重数可以修改。'));
+    expect((progressDescription.center.dy - incompleteChip.center.dy).abs(),
+        lessThan(2));
     expect(find.textContaining('1/2 个角色已全部收集'), findsOneWidget);
     await tester.tap(find.text('进度视图首领'));
     await tester.pumpAndSettle();
@@ -418,6 +426,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('进度视图首领'), findsWidgets);
     expect(find.text('普通进度首领'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('progress-character-filter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(InkWell, '缺失角色'));
+    await tester.pumpAndSettle();
+    expect(find.text('完整角色'), findsNothing);
+    expect(find.textContaining('0/1 个角色已全部收集'), findsOneWidget);
     await tester.tap(find.text('只看未完成'));
     await tester.pumpAndSettle();
     expect(find.textContaining('0/1 个角色已全部收集'), findsOneWidget);

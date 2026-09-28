@@ -2980,7 +2980,8 @@ class _FilterDropdown<T> extends StatefulWidget {
       required this.width,
       required this.onChanged,
       this.compactLabel,
-      this.searchable = false});
+      this.searchable = false,
+      super.key});
   final T value;
   final List<T> values;
   final String Function(T value) itemLabel;
@@ -5580,6 +5581,7 @@ class AllSkillsPage extends StatefulWidget {
 class _AllSkillsPageState extends State<AllSkillsPage> {
   final bossQuery = TextEditingController();
   String characterId = 'all';
+  String progressCharacterId = 'all';
   int maxRank = 0;
   bool showBossProgress = false;
   bool onlyIncomplete = false;
@@ -5713,7 +5715,15 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
     final progressVisibleBosses = progressBossType == 'all'
         ? visibleBosses
         : visibleBosses.where((boss) => boss.type == progressBossType).toList();
-    final progressCharacters = characters;
+    final effectiveProgressCharacterId =
+        characters.any((character) => character.id == progressCharacterId)
+            ? progressCharacterId
+            : 'all';
+    final progressCharacters = effectiveProgressCharacterId == 'all'
+        ? characters
+        : characters
+            .where((character) => character.id == effectiveProgressCharacterId)
+            .toList();
     final progressBosses = onlyIncomplete
         ? progressVisibleBosses
             .where((boss) => progressCharacters.any((item) {
@@ -5751,53 +5761,49 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
                       widget.store.skillPageResults.remove(3);
                     }
                   })),
-          if (!showBossProgress) ...[
-            const SizedBox(height: 10),
-            LayoutBuilder(builder: (context, constraints) {
-              final width = _filterItemWidth(constraints.maxWidth, 2);
-              return Align(
-                  alignment: Alignment.centerRight,
-                  child: SizedBox(
-                      width: width,
-                      child: OutlinedButton.icon(
-                          onPressed: characters.isEmpty ? null : _setAllRanks,
-                          icon: const Icon(Icons.layers_outlined, size: 17),
-                          label: Text(characterId == 'all'
-                              ? '设置全部角色技能重数'
-                              : '设置当前角色全部技能重数'))));
-            }),
-          ],
           const SizedBox(height: 12),
           LayoutBuilder(builder: (context, constraints) {
             final width = _filterItemWidth(constraints.maxWidth, 3);
-            final incompleteFilterWidth =
-                constraints.maxWidth < 600 ? 126.0 : 138.0;
             return Wrap(spacing: 10, runSpacing: 10, children: [
-              if (!showBossProgress)
-                _FilterDropdown<String>(
-                    value: effectiveCharacterId,
-                    values: [
-                      'all',
-                      ...characters.map((character) => character.id)
-                    ],
-                    itemLabel: (value) => value == 'all'
-                        ? '全部角色'
-                        : characters
-                            .firstWhere((character) => character.id == value)
-                            .name,
-                    compactLabel: (value) => value == 'all'
-                        ? '角色'
-                        : characters
-                            .firstWhere((character) => character.id == value)
-                            .name,
-                    width: width,
-                    searchable: true,
-                    onChanged: (value) => setState(() {
+              _FilterDropdown<String>(
+                  key: showBossProgress
+                      ? const ValueKey('progress-character-filter')
+                      : const ValueKey('skill-character-filter'),
+                  value: showBossProgress
+                      ? effectiveProgressCharacterId
+                      : effectiveCharacterId,
+                  values: [
+                    'all',
+                    ...characters.map((character) => character.id)
+                  ],
+                  itemLabel: (value) => value == 'all'
+                      ? '全部角色'
+                      : characters
+                          .firstWhere((character) => character.id == value)
+                          .name,
+                  compactLabel: (value) => value == 'all'
+                      ? '角色'
+                      : characters
+                          .firstWhere((character) => character.id == value)
+                          .name,
+                  width: width,
+                  searchable: true,
+                  onChanged: (value) => setState(() {
+                        if (showBossProgress) {
+                          progressCharacterId = value ?? 'all';
+                        } else {
                           characterId = value ?? 'all';
                           widget.store.manuallySelectedSkillPageCharacters
                               .add(3);
                           widget.store.skillPageResults.remove(3);
-                        })),
+                        }
+                      })),
+              _NameAutocomplete(
+                  controller: bossQuery,
+                  names: widget.store.bosses.map((boss) => boss.name).toList(),
+                  width: width,
+                  hint: '全部首领',
+                  compactHint: '首领'),
               if (showBossProgress)
                 _FilterDropdown<String>(
                     value: progressBossType,
@@ -5807,33 +5813,7 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
                     width: width,
                     onChanged: (value) =>
                         setState(() => progressBossType = value ?? 'all')),
-              _NameAutocomplete(
-                  controller: bossQuery,
-                  names: widget.store.bosses.map((boss) => boss.name).toList(),
-                  width: width,
-                  hint: '全部首领',
-                  compactHint: '首领'),
-              if (showBossProgress)
-                SizedBox(
-                    width: incompleteFilterWidth,
-                    height: 42,
-                    child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: FilterChip(
-                            selected: onlyIncomplete,
-                            materialTapTargetSize:
-                                MaterialTapTargetSize.shrinkWrap,
-                            visualDensity: VisualDensity.compact,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 7, vertical: 7),
-                            selectedColor: const Color(0xffe1f1ea),
-                            side: const BorderSide(color: line),
-                            avatar: const Icon(Icons.pending_actions_outlined,
-                                size: 16),
-                            label: const Text('只看未完成'),
-                            onSelected: (value) =>
-                                setState(() => onlyIncomplete = value))))
-              else
+              if (!showBossProgress)
                 _FilterDropdown<int>(
                     value: maxRank,
                     values: [
@@ -5851,13 +5831,43 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
             ]);
           }),
           const SizedBox(height: 10),
-          Text(
-              showBossProgress
-                  ? '按首领查看 ${progressCharacters.length} 个角色的技能收集情况，点击重数可以修改。'
-                  : character == null
-                      ? '切换角色后可按首领和技能重数筛选。'
-                      : '当前角色：${character.name} · 符合条件的首领：${visibleBosses.length} 个',
-              style: const TextStyle(color: muted, fontSize: 12)),
+          LayoutBuilder(builder: (context, constraints) {
+            final compact = constraints.maxWidth < 700;
+            return Row(children: [
+              Expanded(
+                  child: Text(
+                      showBossProgress
+                          ? '按首领查看 ${progressCharacters.length} 个角色的技能收集情况，点击重数可以修改。'
+                          : character == null
+                              ? '切换角色后可按首领和技能重数筛选。'
+                              : '当前角色：${character.name} · 符合条件的首领：${visibleBosses.length} 个',
+                      style: const TextStyle(color: muted, fontSize: 12))),
+              const SizedBox(width: 12),
+              if (showBossProgress)
+                FilterChip(
+                    selected: onlyIncomplete,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 7),
+                    selectedColor: const Color(0xffe1f1ea),
+                    side: const BorderSide(color: line),
+                    avatar:
+                        const Icon(Icons.pending_actions_outlined, size: 16),
+                    label: const Text('只看未完成'),
+                    onSelected: (value) =>
+                        setState(() => onlyIncomplete = value))
+              else
+                OutlinedButton.icon(
+                    onPressed: characters.isEmpty ? null : _setAllRanks,
+                    icon: const Icon(Icons.layers_outlined, size: 17),
+                    label: Text(compact
+                        ? '设置技能重数'
+                        : characterId == 'all'
+                            ? '设置全部角色技能重数'
+                            : '设置当前角色全部技能重数'))
+            ]);
+          }),
           const SizedBox(height: 14),
           if ((showBossProgress ? progressBosses : visibleBosses).isEmpty)
             const CardShell(
