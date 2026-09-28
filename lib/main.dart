@@ -5530,6 +5530,8 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
   final bossQuery = TextEditingController();
   String characterId = 'all';
   int maxRank = 0;
+  bool showBossProgress = false;
+  bool onlyIncomplete = false;
 
   @override
   void initState() {
@@ -5652,31 +5654,70 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
         : characters.firstWhere((item) => item.id == effectiveCharacterId,
             orElse: () => characters.first);
     final visibleBosses = filteredBosses;
+    final progressCharacters = effectiveCharacterId == 'all'
+        ? characters
+        : characters.where((item) => item.id == effectiveCharacterId).toList();
+    final progressBosses = onlyIncomplete
+        ? visibleBosses
+            .where((boss) => progressCharacters.any((item) {
+                  final progress =
+                      _bossLearnedProgress(widget.store, item, boss);
+                  return progress.collected < progress.total;
+                }))
+            .toList()
+        : visibleBosses;
     return PageBody(
         title: '所有技能汇总',
-        action: Text('${visibleBosses.length} 个首领',
+        action: Text(
+            '${showBossProgress ? progressBosses.length : visibleBosses.length} 个首领',
             style: const TextStyle(color: teal, fontWeight: FontWeight.w600)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(
+                    value: false,
+                    icon: Icon(Icons.list_alt_outlined, size: 17),
+                    label: Text('技能列表')),
+                ButtonSegment(
+                    value: true,
+                    icon: Icon(Icons.grid_view_outlined, size: 17),
+                    label: Text('首领进度'))
+              ],
+              selected: {
+                showBossProgress
+              },
+              showSelectedIcon: false,
+              onSelectionChanged: (value) => setState(() {
+                    showBossProgress = value.first;
+                    if (showBossProgress) {
+                      characterId = 'all';
+                      maxRank = 0;
+                      widget.store.skillPageResults.remove(3);
+                    }
+                  })),
+          const SizedBox(height: 12),
           CharacterSwitcher(
               store: widget.store,
               onSelected: (value) => setState(() {
                     characterId = value;
                     widget.store.skillPageResults.remove(3);
                   })),
-          const SizedBox(height: 10),
-          LayoutBuilder(builder: (context, constraints) {
-            final width = _filterItemWidth(constraints.maxWidth, 2);
-            return Align(
-                alignment: Alignment.centerRight,
-                child: SizedBox(
-                    width: width,
-                    child: OutlinedButton.icon(
-                        onPressed: characters.isEmpty ? null : _setAllRanks,
-                        icon: const Icon(Icons.layers_outlined, size: 17),
-                        label: Text(characterId == 'all'
-                            ? '设置全部角色技能重数'
-                            : '设置当前角色全部技能重数'))));
-          }),
+          if (!showBossProgress) ...[
+            const SizedBox(height: 10),
+            LayoutBuilder(builder: (context, constraints) {
+              final width = _filterItemWidth(constraints.maxWidth, 2);
+              return Align(
+                  alignment: Alignment.centerRight,
+                  child: SizedBox(
+                      width: width,
+                      child: OutlinedButton.icon(
+                          onPressed: characters.isEmpty ? null : _setAllRanks,
+                          icon: const Icon(Icons.layers_outlined, size: 17),
+                          label: Text(characterId == 'all'
+                              ? '设置全部角色技能重数'
+                              : '设置当前角色全部技能重数'))));
+            }),
+          ],
           const SizedBox(height: 12),
           LayoutBuilder(builder: (context, constraints) {
             final width = _filterItemWidth(constraints.maxWidth, 2);
@@ -5687,32 +5728,51 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
                   width: width,
                   hint: '全部首领',
                   compactHint: '首领'),
-              _FilterDropdown<int>(
-                  value: maxRank,
-                  values: [
-                    0,
-                    ...List.generate(widget.store.maxSkillRank,
-                        (index) => widget.store.maxSkillRank - index)
-                  ],
-                  itemLabel: (value) => value == 0 ? '全部重数' : '$value 重及以下',
-                  compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
-                  width: width,
-                  onChanged: (value) => setState(() {
-                        maxRank = value ?? 0;
-                        widget.store.skillPageResults.remove(3);
-                      }))
+              if (showBossProgress)
+                SizedBox(
+                    width: width,
+                    child: FilterChip(
+                        selected: onlyIncomplete,
+                        avatar: const Icon(Icons.pending_actions_outlined,
+                            size: 17),
+                        label: const Text('只看未完成'),
+                        onSelected: (value) =>
+                            setState(() => onlyIncomplete = value)))
+              else
+                _FilterDropdown<int>(
+                    value: maxRank,
+                    values: [
+                      0,
+                      ...List.generate(widget.store.maxSkillRank,
+                          (index) => widget.store.maxSkillRank - index)
+                    ],
+                    itemLabel: (value) => value == 0 ? '全部重数' : '$value 重及以下',
+                    compactLabel: (value) => value == 0 ? '重数' : '$value 重以下',
+                    width: width,
+                    onChanged: (value) => setState(() {
+                          maxRank = value ?? 0;
+                          widget.store.skillPageResults.remove(3);
+                        }))
             ]);
           }),
           const SizedBox(height: 10),
           Text(
-              character == null
-                  ? '切换角色后可按首领和技能重数筛选。'
-                  : '当前角色：${character.name} · 符合条件的首领：${visibleBosses.length} 个',
+              showBossProgress
+                  ? '按首领查看 ${progressCharacters.length} 个角色的技能收集情况，点击重数可以修改。'
+                  : character == null
+                      ? '切换角色后可按首领和技能重数筛选。'
+                      : '当前角色：${character.name} · 符合条件的首领：${visibleBosses.length} 个',
               style: const TextStyle(color: muted, fontSize: 12)),
           const SizedBox(height: 14),
-          if (visibleBosses.isEmpty)
+          if ((showBossProgress ? progressBosses : visibleBosses).isEmpty)
             const CardShell(
                 child: Text('没有符合条件的首领', style: TextStyle(color: muted)))
+          else if (showBossProgress)
+            _BossProgressView(
+                store: widget.store,
+                bosses: progressBosses,
+                characters: progressCharacters,
+                onlyIncomplete: onlyIncomplete)
           else
             _AllSkillsTable(
                 store: widget.store,
@@ -5721,6 +5781,299 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
                 onChanged: () => setState(() {}))
         ]));
   }
+}
+
+class _BossProgressView extends StatelessWidget {
+  const _BossProgressView(
+      {required this.store,
+      required this.bosses,
+      required this.characters,
+      required this.onlyIncomplete});
+
+  final SkillStore store;
+  final List<Boss> bosses;
+  final List<CharacterData> characters;
+  final bool onlyIncomplete;
+
+  @override
+  Widget build(BuildContext context) {
+    if (characters.isEmpty) {
+      return const CardShell(
+          child: Text('没有符合条件的角色', style: TextStyle(color: muted)));
+    }
+    return Column(
+        children: bosses.map((boss) {
+      final visibleCharacters = onlyIncomplete
+          ? characters.where((character) {
+              final progress = _bossLearnedProgress(store, character, boss);
+              return progress.collected < progress.total;
+            }).toList()
+          : characters;
+      return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: _BossProgressCard(
+              store: store, boss: boss, characters: visibleCharacters));
+    }).toList());
+  }
+}
+
+({int collected, int total}) _bossLearnedProgress(
+    SkillStore store, CharacterData character, Boss boss) {
+  final skills = boss.skills
+      .where((skill) => skillAppliesToGender(skill, character.gender))
+      .toList();
+  return (
+    collected:
+        skills.where((skill) => store.level(character.id, skill.id) > 0).length,
+    total: skills.length
+  );
+}
+
+class _BossProgressCard extends StatefulWidget {
+  const _BossProgressCard(
+      {required this.store, required this.boss, required this.characters});
+  final SkillStore store;
+  final Boss boss;
+  final List<CharacterData> characters;
+
+  @override
+  State<_BossProgressCard> createState() => _BossProgressCardState();
+}
+
+class _BossProgressCardState extends State<_BossProgressCard> {
+  bool expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final complete = widget.characters.where((character) {
+      final progress =
+          _bossLearnedProgress(widget.store, character, widget.boss);
+      return progress.total > 0 && progress.collected == progress.total;
+    }).length;
+    final total = widget.characters.length;
+    final ratio = total == 0 ? 0.0 : complete / total;
+    return CardShell(
+        padding: EdgeInsets.zero,
+        child: Column(children: [
+          InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: () => setState(() => expanded = !expanded),
+              child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  child: Row(children: [
+                    Icon(expanded
+                        ? Icons.keyboard_arrow_down
+                        : Icons.keyboard_arrow_right),
+                    const SizedBox(width: 6),
+                    Expanded(
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                          Text(widget.boss.name,
+                              style: const TextStyle(
+                                  color: ink,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 3),
+                          Text(
+                              '${widget.boss.skills.length} 个技能 · $complete/$total 个角色已全部收集',
+                              style:
+                                  const TextStyle(color: muted, fontSize: 12))
+                        ])),
+                    SizedBox(
+                        width: 100,
+                        child: LinearProgressIndicator(
+                            value: ratio,
+                            minHeight: 7,
+                            borderRadius: BorderRadius.circular(8),
+                            backgroundColor: const Color(0xffedf1ef),
+                            color: teal)),
+                    const SizedBox(width: 10),
+                    Text('${(ratio * 100).round()}%',
+                        style: const TextStyle(
+                            color: teal, fontWeight: FontWeight.w800))
+                  ]))),
+          if (expanded) ...[
+            const Divider(height: 1, color: line),
+            Padding(
+                padding: const EdgeInsets.all(12),
+                child: _BossProgressMatrix(
+                    store: widget.store,
+                    boss: widget.boss,
+                    characters: widget.characters))
+          ]
+        ]));
+  }
+}
+
+class _BossProgressMatrix extends StatefulWidget {
+  const _BossProgressMatrix(
+      {required this.store, required this.boss, required this.characters});
+  final SkillStore store;
+  final Boss boss;
+  final List<CharacterData> characters;
+
+  @override
+  State<_BossProgressMatrix> createState() => _BossProgressMatrixState();
+}
+
+class _BossProgressMatrixState extends State<_BossProgressMatrix> {
+  final horizontalController = ScrollController();
+
+  @override
+  void dispose() {
+    horizontalController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(builder: (context, box) {
+        const characterWidth = 176.0;
+        const skillWidth = 104.0;
+        const headerHeight = 46.0;
+        const rowHeight = 50.0;
+        final movingWidth = math.max(
+            math.max(0.0, box.maxWidth - characterWidth),
+            widget.boss.skills.length * skillWidth);
+        final tableWidth = characterWidth + movingWidth;
+        final bodyHeight = widget.characters.length * rowHeight;
+
+        Widget cell(
+                {required double width,
+                required double height,
+                required Widget child,
+                bool header = false,
+                Alignment alignment = Alignment.center}) =>
+            Container(
+                width: width,
+                height: height,
+                alignment: alignment,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                    color: header ? const Color(0xfff7f9f8) : Colors.white,
+                    border: const Border(
+                        right: BorderSide(color: line),
+                        bottom: BorderSide(color: line))),
+                child: child);
+
+        final skillHeaders = Row(
+            children: widget.boss.skills
+                .map((skill) => cell(
+                    width: skillWidth,
+                    height: headerHeight,
+                    header: true,
+                    child: Text(managementSkillName(skill),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            color: muted,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700))))
+                .toList());
+        final characterRows = Column(
+            children: widget.characters.map((character) {
+          final progress =
+              _bossLearnedProgress(widget.store, character, widget.boss);
+          return cell(
+              width: characterWidth,
+              height: rowHeight,
+              alignment: Alignment.centerLeft,
+              child: Row(children: [
+                MindAvatar(character: character, radius: 14),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: Text(character.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: ink,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700))),
+                Text('${progress.collected}/${progress.total}',
+                    style: const TextStyle(
+                        color: teal, fontSize: 11, fontWeight: FontWeight.w700))
+              ]));
+        }).toList());
+        final rankRows = Column(
+            children: widget.characters.map((character) {
+          return Row(
+              children: widget.boss.skills.map((skill) {
+            final applies = skillAppliesToGender(skill, character.gender);
+            final rank =
+                applies ? widget.store.level(character.id, skill.id) : null;
+            return cell(
+                width: skillWidth,
+                height: rowHeight,
+                child: applies
+                    ? InkWell(
+                        onTap: () async {
+                          await showSkillRankDialog(
+                              context, widget.store, character, skill.name,
+                              displayName:
+                                  skillNameForGender(skill, character.gender));
+                          if (mounted) setState(() {});
+                        },
+                        child: SizedBox.expand(
+                            child: Center(
+                                child: RankBadge(rank: rank!, plain: true))))
+                    : const Text('—', style: TextStyle(color: muted)));
+          }).toList());
+        }).toList());
+
+        return Scrollbar(
+            controller: horizontalController,
+            thumbVisibility: true,
+            notificationPredicate: (notification) =>
+                notification.metrics.axis == Axis.horizontal,
+            child: SingleChildScrollView(
+                controller: horizontalController,
+                scrollDirection: Axis.horizontal,
+                child: SizedBox(
+                    width: tableWidth,
+                    height: headerHeight + bodyHeight,
+                    child: AnimatedBuilder(
+                        animation: horizontalController,
+                        builder: (context, child) {
+                          final offset = horizontalController.hasClients
+                              ? horizontalController.offset
+                              : 0.0;
+                          return Stack(clipBehavior: Clip.hardEdge, children: [
+                            Positioned(
+                                left: characterWidth,
+                                top: 0,
+                                width: movingWidth,
+                                height: headerHeight,
+                                child: skillHeaders),
+                            Positioned(
+                                left: characterWidth,
+                                top: headerHeight,
+                                width: movingWidth,
+                                height: bodyHeight,
+                                child: rankRows),
+                            Positioned(
+                                left: offset,
+                                top: 0,
+                                child: cell(
+                                    width: characterWidth,
+                                    height: headerHeight,
+                                    header: true,
+                                    alignment: Alignment.centerLeft,
+                                    child: const Text('角色 · 收集进度',
+                                        style: TextStyle(
+                                            color: muted,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w700)))),
+                            Positioned(
+                                left: offset,
+                                top: headerHeight,
+                                width: characterWidth,
+                                height: bodyHeight,
+                                child: characterRows)
+                          ]);
+                        }))));
+      });
 }
 
 class _AllSkillsTable extends StatefulWidget {

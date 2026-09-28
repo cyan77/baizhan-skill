@@ -268,6 +268,64 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('all skills shows Boss progress for every character',
+      (tester) async {
+    final store = SkillStore();
+    store.bosses.add(Boss(
+        id: 'progress-view-boss',
+        name: '进度视图首领',
+        spirit: 400,
+        stamina: 400,
+        skills: [
+          Skill(id: 'progress-view-skill-1', name: '进度技能一'),
+          Skill(id: 'progress-view-skill-2', name: '进度技能二')
+        ]));
+    store.characters.addAll([
+      CharacterData(
+          id: 'complete-character',
+          name: '完整角色',
+          gender: '女性',
+          school: '万花',
+          mind: '花间游',
+          position: '输出',
+          levels: const {
+            'progress-view-skill-1': 10,
+            'progress-view-skill-2': 10
+          }),
+      CharacterData(
+          id: 'incomplete-character',
+          name: '缺失角色',
+          gender: '女性',
+          school: '天策',
+          mind: '傲血战意',
+          position: '输出',
+          levels: const {
+            'progress-view-skill-1': 6,
+            'progress-view-skill-2': 0
+          })
+    ]);
+
+    await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: AllSkillsPage(store: store))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('首领进度'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('1/2 个角色已全部收集'), findsOneWidget);
+    await tester.tap(find.text('进度视图首领'));
+    await tester.pumpAndSettle();
+    expect(find.text('完整角色'), findsWidgets);
+    expect(find.text('缺失角色'), findsWidgets);
+    expect(find.text('进度技能一'), findsOneWidget);
+    expect(find.text('进度技能二'), findsOneWidget);
+    expect(find.text('2/2'), findsOneWidget);
+    expect(find.text('1/2'), findsOneWidget);
+    await tester.tap(find.text('只看未完成'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('0/1 个角色已全部收集'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('character preview expands skills and edits their ranks',
       (tester) async {
     final store = SkillStore();
