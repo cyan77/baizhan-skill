@@ -352,12 +352,20 @@ void main() {
     store.bosses.add(Boss(
         id: 'progress-view-boss',
         name: '进度视图首领',
+        type: '精英',
         spirit: 400,
         stamina: 400,
         skills: [
           Skill(id: 'progress-view-skill-1', name: '进度技能一'),
           Skill(id: 'progress-view-skill-2', name: '进度技能二')
         ]));
+    store.bosses.add(Boss(
+        id: 'normal-progress-view-boss',
+        name: '普通进度首领',
+        type: '普通',
+        spirit: 200,
+        stamina: 200,
+        skills: [Skill(id: 'normal-progress-view-skill', name: '普通进度技能')]));
     store.characters.addAll([
       CharacterData(
           id: 'complete-character',
@@ -391,6 +399,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('全部角色'), findsNothing);
+    expect(find.text('全部类型'), findsOneWidget);
     final incompleteChip = tester.getRect(find.byType(FilterChip));
     expect(incompleteChip.width, lessThanOrEqualTo(138));
     expect(incompleteChip.height, lessThanOrEqualTo(42));
@@ -402,7 +411,13 @@ void main() {
     expect(find.text('进度技能一'), findsOneWidget);
     expect(find.text('进度技能二'), findsOneWidget);
     expect(find.text('2/2'), findsOneWidget);
-    expect(find.text('1/2'), findsOneWidget);
+    expect(find.text('0/2'), findsOneWidget);
+    await tester.tap(find.text('全部类型'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('精英').last);
+    await tester.pumpAndSettle();
+    expect(find.text('进度视图首领'), findsWidgets);
+    expect(find.text('普通进度首领'), findsNothing);
     await tester.tap(find.text('只看未完成'));
     await tester.pumpAndSettle();
     expect(find.textContaining('0/1 个角色已全部收集'), findsOneWidget);

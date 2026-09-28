@@ -5583,6 +5583,7 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
   int maxRank = 0;
   bool showBossProgress = false;
   bool onlyIncomplete = false;
+  String progressBossType = 'all';
 
   @override
   void initState() {
@@ -5709,16 +5710,19 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
         : characters.firstWhere((item) => item.id == effectiveCharacterId,
             orElse: () => characters.first);
     final visibleBosses = filteredBosses;
+    final progressVisibleBosses = progressBossType == 'all'
+        ? visibleBosses
+        : visibleBosses.where((boss) => boss.type == progressBossType).toList();
     final progressCharacters = characters;
     final progressBosses = onlyIncomplete
-        ? visibleBosses
+        ? progressVisibleBosses
             .where((boss) => progressCharacters.any((item) {
                   final progress =
                       _bossLearnedProgress(widget.store, item, boss);
                   return progress.collected < progress.total;
                 }))
             .toList()
-        : visibleBosses;
+        : progressVisibleBosses;
     return PageBody(
         title: '首领技能',
         action: Text(
@@ -5794,6 +5798,15 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
                               .add(3);
                           widget.store.skillPageResults.remove(3);
                         })),
+              if (showBossProgress)
+                _FilterDropdown<String>(
+                    value: progressBossType,
+                    values: const ['all', ...bossTypeOptions],
+                    itemLabel: (value) => value == 'all' ? '全部类型' : value,
+                    compactLabel: (value) => value == 'all' ? '类型' : value,
+                    width: width,
+                    onChanged: (value) =>
+                        setState(() => progressBossType = value ?? 'all')),
               _NameAutocomplete(
                   controller: bossQuery,
                   names: widget.store.bosses.map((boss) => boss.name).toList(),
@@ -5905,8 +5918,10 @@ class _BossProgressView extends StatelessWidget {
       .where((skill) => skillAppliesToGender(skill, character.gender))
       .toList();
   return (
-    collected:
-        skills.where((skill) => store.level(character.id, skill.id) > 0).length,
+    collected: skills
+        .where((skill) =>
+            store.level(character.id, skill.id) >= store.maxSkillRank)
+        .length,
     total: skills.length
   );
 }
