@@ -68,6 +68,12 @@ class MainFlutterWindow: NSWindow {
         do {
           self.stopAccessingLocalData()
           let url = URL(fileURLWithPath: path)
+          if !FileManager.default.fileExists(atPath: url.path) {
+            guard FileManager.default.createFile(atPath: url.path, contents: Data()) else {
+              throw NSError(domain: "BaizhanSkill", code: 3,
+                            userInfo: [NSLocalizedDescriptionKey: "无法创建所选的本地数据文件"])
+            }
+          }
           let bookmark = try url.bookmarkData(
             options: .withSecurityScope,
             includingResourceValuesForKeys: nil,
