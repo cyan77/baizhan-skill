@@ -1683,6 +1683,14 @@ class SkillStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setLevelForCharacter(String characterId, String skillId, int value) {
+    final character = _findCharacter(characterId);
+    if (character == null) return;
+    character.levels[skillId] = value.clamp(0, maxSkillRank).toInt();
+    _save();
+    notifyListeners();
+  }
+
   void setLevelForSkillName(String characterId, String skillName, int value) {
     final character = _findCharacter(characterId);
     if (character == null) return;
@@ -6591,6 +6599,37 @@ class _AllSkillsTableState extends State<_AllSkillsTable> {
                                   ? null
                                   : widget.store
                                       .level(widget.character!.id, skill.id),
+                              onIncrease: widget.character == null ||
+                                      widget.store.level(
+                                              widget.character!.id, skill.id) >=
+                                          widget.store.maxSkillRank
+                                  ? null
+                                  : () {
+                                      widget.store.setLevelForCharacter(
+                                          widget.character!.id,
+                                          skill.id,
+                                          widget.store.level(
+                                                  widget.character!.id,
+                                                  skill.id) +
+                                              1);
+                                      widget.onChanged();
+                                    },
+                              onDecrease: widget.character == null ||
+                                      widget.store.level(
+                                              widget.character!.id, skill.id) <=
+                                          0
+                                  ? null
+                                  : () {
+                                      widget.store.setLevelForCharacter(
+                                          widget.character!.id,
+                                          skill.id,
+                                          widget.store.level(
+                                                  widget.character!.id,
+                                                  skill.id) -
+                                              1);
+                                      widget.onChanged();
+                                    },
+                              showRankControls: widget.character != null,
                               collection: ''))
                 ]
               ]))));
@@ -6606,7 +6645,10 @@ class _AllSkillsTableRow extends StatelessWidget {
       this.stamina,
       this.bossRow = false,
       this.expanded = false,
-      this.nameColor = ink});
+      this.nameColor = ink,
+      this.showRankControls = false,
+      this.onIncrease,
+      this.onDecrease});
   final String name;
   final int? rank;
   final String? rankText;
@@ -6616,6 +6658,9 @@ class _AllSkillsTableRow extends StatelessWidget {
   final bool bossRow;
   final bool expanded;
   final Color nameColor;
+  final bool showRankControls;
+  final VoidCallback? onIncrease;
+  final VoidCallback? onDecrease;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -6665,12 +6710,24 @@ class _AllSkillsTableRow extends StatelessWidget {
                     fontWeight: FontWeight.w700))),
         Expanded(
             flex: 2,
-            child: Text(collection,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                    color: bossRow ? ink : muted,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700))),
+            child: showRankControls
+                ? Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    _RankStepButton(
+                        icon: Icons.keyboard_arrow_up,
+                        tooltip: '增加一重',
+                        onPressed: onIncrease),
+                    const SizedBox(width: 12),
+                    _RankStepButton(
+                        icon: Icons.keyboard_arrow_down,
+                        tooltip: '减少一重',
+                        onPressed: onDecrease)
+                  ])
+                : Text(collection,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: bossRow ? ink : muted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700))),
         Expanded(
             flex: 2,
             child: Text(spirit ?? '',
