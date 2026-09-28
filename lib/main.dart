@@ -8935,15 +8935,9 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                                       ? () async {
                                           setState(() => importing = 'image');
                                           try {
-                                            final comparison =
+                                            final levels =
                                                 await pickCharacterImageLevels(
                                                     store, gender);
-                                            if (comparison == null ||
-                                                !context.mounted) return;
-                                            final levels = Platform.isWindows
-                                                ? await chooseCharacterImageOcr(
-                                                    context, comparison)
-                                                : comparison.system;
                                             if (levels == null ||
                                                 !context.mounted) return;
                                             setState(() {
@@ -9105,76 +9099,7 @@ Future<CharacterExcelData?> pickCharacterExcelData(int maxSkillRank) async {
           onTimeout: () => throw const FormatException('Excel 解析超时，请检查文件是否损坏'));
 }
 
-typedef CharacterImageOcrComparison = ({
-  Map<String, int> system,
-  String? systemError,
-  Map<String, int>? paddle,
-  String? paddleError,
-});
-
-Future<Map<String, int>?> chooseCharacterImageOcr(BuildContext context,
-    CharacterImageOcrComparison comparison) async {
-  final system = comparison.system;
-  final paddle = comparison.paddle;
-  final names = <String>{...system.keys, ...?paddle?.keys}.toList()..sort();
-  final differences = names.where((name) => system[name] != paddle?[name]).toList();
-  return showDialog<Map<String, int>>(
-      context: context,
-      builder: (context) => AlertDialog(
-          title: const Text('选择图片识别结果'),
-          content: SizedBox(
-              width: 480,
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Text('系统识别 ${system.length} 项 · PaddleOCR ${paddle?.length ?? 0} 项',
-                    style: const TextStyle(fontSize: 13)),
-                if (comparison.systemError != null) ...[
-                  const SizedBox(height: 8),
-                  Text('系统识别暂不可用：${comparison.systemError}',
-                      style: const TextStyle(color: muted, fontSize: 12)),
-                ],
-                if (comparison.paddleError != null) ...[
-                  const SizedBox(height: 8),
-                  Text('PaddleOCR 暂不可用：${comparison.paddleError}',
-                      style: const TextStyle(color: muted, fontSize: 12)),
-                ] else ...[
-                  const SizedBox(height: 8),
-                  Text('两边有 ${differences.length} 项不同；数量多不代表识别更准确，请核对重数。',
-                      style: const TextStyle(color: muted, fontSize: 12)),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                      height: math.min(230.0, differences.length * 34.0),
-                      child: ListView.builder(
-                          shrinkWrap: true,
-                          itemCount: differences.length,
-                          itemBuilder: (context, index) {
-                            final name = differences[index];
-                            String rank(int? value) =>
-                                value == null ? '未匹配' : '$value 重';
-                            return Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 6),
-                                child: Text('$name  系统 ${rank(system[name])} · '
-                                    'Paddle ${rank(paddle?[name])}',
-                                    style: const TextStyle(fontSize: 12)));
-                          })),
-                ],
-              ])),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('取消')),
-            OutlinedButton(
-                onPressed: system.isEmpty
-                    ? null : () => Navigator.pop(context, system),
-                child: const Text('使用系统结果')),
-            if (paddle != null)
-              FilledButton(
-                  onPressed: paddle.isEmpty
-                      ? null : () => Navigator.pop(context, paddle),
-                  child: const Text('使用 PaddleOCR 结果')),
-          ]));
-}
-
-Future<CharacterImageOcrComparison?> pickCharacterImageLevels(
+Future<Map<String, int>?> pickCharacterImageLevels(
     SkillStore store, String gender) async {
   final picked = await FilePicker.pickFiles(
       type: FileType.custom,
@@ -9191,6 +9116,16 @@ Future<CharacterImageOcrComparison?> pickCharacterImageLevels(
   if (imageSize > 25 * 1024 * 1024) {
     throw const FormatException('图片文件过大，请选择小于 25 MB 的截图');
   }
+  String? paddleError;
+  if (Platform.isWindows) {
+    try {
+      final paddleRaw = await recognizePaddleImageInIsolate(path);
+      final paddle = parseCharacterImageOcr(paddleRaw, store, gender);
+      if (paddle.isNotEmpty) return paddle;
+    } catch (error) {
+      paddleError = '$error';
+    }
+  }
   // Windows enlarges narrow screenshots during native decoding, avoiding a
   // temporary file that Windows OCR could not open on some installations.
   if (Platform.isMacOS) {
@@ -9205,8 +9140,6 @@ Future<CharacterImageOcrComparison?> pickCharacterImageLevels(
     }
   }
   const channel = MethodChannel('baizhan_skill/ocr');
-  List<dynamic> raw = const [];
-  String? systemError;
   Future<List<dynamic>> recognize(String imagePath) async {
     if (!await File(imagePath).exists()) {
       throw FormatException('识别图片不存在：$imagePath');
@@ -9232,44 +9165,19 @@ Future<CharacterImageOcrComparison?> pickCharacterImageLevels(
   }
 
   try {
-    raw = await recognizeWithFallback();
+    final raw = await recognizeWithFallback();
+    final system = parseCharacterImageOcr(raw, store, gender);
+    if (system.isNotEmpty) return system;
+    throw const FormatException('没有识别到首领管理中的技能');
   } catch (error) {
-    if (!Platform.isWindows) rethrow;
-    systemError = '$error';
+    if (paddleError == null) rethrow;
+    throw FormatException('PaddleOCR 不可用：$paddleError；系统识别也未成功：$error');
   } finally {
     if (temporaryDirectory != null) {
       try {
         await temporaryDirectory.delete(recursive: true);
       } catch (_) {}
     }
-  }
-  Map<String, int> parseOrEmpty(List<dynamic> lines) {
-    try {
-      return parseCharacterImageOcr(lines, store, gender);
-    } on FormatException {
-      return {};
-    }
-  }
-  final system = parseOrEmpty(raw);
-  if (!Platform.isWindows) {
-    if (system.isEmpty) throw const FormatException('没有识别到首领管理中的技能');
-    return (system: system, systemError: null,
-        paddle: null, paddleError: null);
-  }
-  try {
-    final paddleRaw = await recognizePaddleImageInIsolate(path);
-    final paddle = parseOrEmpty(paddleRaw);
-    if (system.isEmpty && paddle.isEmpty) {
-      throw const FormatException('两种方式均未识别到首领管理中的技能');
-    }
-    return (system: system, systemError: systemError,
-        paddle: paddle, paddleError: null);
-  } catch (error) {
-    if (system.isEmpty) {
-      throw FormatException('两种图片识别方式均不可用：$error');
-    }
-    return (system: system, systemError: systemError,
-        paddle: null, paddleError: '$error');
   }
 }
 
