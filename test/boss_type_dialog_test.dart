@@ -70,13 +70,47 @@ void main() {
   test('navigation configuration supports visibility and ordering', () {
     final store = SkillStore();
     store.setNavigationConfiguration(
-        ['bosses', 'characters', 'all', 'important', 'tradable'],
+        ['bosses', 'characters', 'all', 'featured'],
         {'bosses', 'all'},
         {'bosses': '首领技能'});
 
     expect(store.navigationOrder.first, 'bosses');
     expect(store.navigationVisible, {'bosses', 'all'});
     expect(store.navigationLabels['bosses'], '首领技能');
+  });
+
+  test('legacy skill navigation is merged into one entry', () async {
+    SharedPreferences.setMockInitialValues({
+      SkillStore.storageKey: jsonEncode({
+        'characters': [],
+        'bosses': [],
+        'importantSkills': [],
+        'purpleSkills': [],
+        'maxSkillRank': 10,
+        'selectedCharacterId': '',
+        'page': 2,
+        'navigationOrder': [
+          'important',
+          'tradable',
+          'all',
+          'characters',
+          'bosses'
+        ],
+        'navigationVisible': ['important', 'tradable', 'all'],
+        'navigationLabels': <String, String>{}
+      })
+    });
+    final store = SkillStore(
+        bossCatalogService: _FakeBossCatalogService(RemoteBossCatalog(
+            version: 1, updatedAt: '', notes: '', bosses: [])));
+
+    await store.load();
+
+    expect(store.navigationOrder, containsAllInOrder(['featured', 'all']));
+    expect(store.navigationOrder.where((id) => id == 'featured'), hasLength(1));
+    expect(store.navigationVisible, containsAll({'featured', 'all'}));
+    expect(store.page, 1);
+    expect(store.featuredSkillsTab, 1);
   });
 
   test('weekly CD uses Monday as the start of each week', () {
@@ -265,6 +299,45 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.getTopLeft(find.text('低进度首领')).dy,
         lessThan(tester.getTopLeft(find.text('高进度首领')).dy));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('important and tradable skills share one switchable page',
+      (tester) async {
+    final store = SkillStore();
+    store.bosses.add(Boss(
+        id: 'featured-boss',
+        name: '汇总首领',
+        spirit: 400,
+        stamina: 400,
+        skills: [
+          Skill(id: 'important-skill', name: '测试重要技能'),
+          Skill(id: 'tradable-skill', name: '测试可交易技能', tradable: true)
+        ]));
+    store.characters.add(CharacterData(
+        id: 'featured-character',
+        name: '汇总角色',
+        gender: '女性',
+        school: '万花',
+        mind: '花间游',
+        position: '输出',
+        levels: const {'important-skill': 6, 'tradable-skill': 8}));
+    store.importantSkills.add('测试重要技能');
+    store.purpleSkills.add('测试可交易技能');
+
+    await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: FeaturedSkillsPage(store: store))));
+    await tester.pumpAndSettle();
+    expect(find.text('重要技能'), findsOneWidget);
+    expect(find.text('可交易技能'), findsOneWidget);
+    expect(find.text('测试重要技能'), findsOneWidget);
+    expect(find.text('测试可交易技能'), findsNothing);
+
+    await tester.tap(find.text('可交易技能'));
+    await tester.pumpAndSettle();
+    expect(find.text('测试重要技能'), findsNothing);
+    expect(find.text('测试可交易技能'), findsOneWidget);
+    expect(store.featuredSkillsTab, 1);
     expect(tester.takeException(), isNull);
   });
 

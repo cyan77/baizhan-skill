@@ -216,12 +216,10 @@ class NavigationPageOption {
 
 const navigationPageOptions = <NavigationPageOption>[
   NavigationPageOption(
-      id: 'important', label: '重要技能', icon: Icons.star_border, page: 1),
-  NavigationPageOption(
-      id: 'tradable',
-      label: '可交易技能',
+      id: 'featured',
+      label: '技能汇总',
       icon: Icons.auto_awesome_outlined,
-      page: 2),
+      page: 1),
   NavigationPageOption(
       id: 'all', label: '所有技能', icon: Icons.account_tree_outlined, page: 3),
   NavigationPageOption(
@@ -230,14 +228,8 @@ const navigationPageOptions = <NavigationPageOption>[
       id: 'bosses', label: '首领管理', icon: Icons.edit_note_outlined, page: 6),
 ];
 
-const defaultNavigationOrder = [
-  'important',
-  'tradable',
-  'all',
-  'characters',
-  'bosses'
-];
-const defaultNavigationVisible = ['important', 'tradable', 'all'];
+const defaultNavigationOrder = ['featured', 'all', 'characters', 'bosses'];
+const defaultNavigationVisible = ['featured', 'all'];
 
 const schoolOptions = [
   '未设置',
@@ -601,6 +593,8 @@ class SkillStore extends ChangeNotifier {
   final Set<int> manuallySelectedSkillPageCharacters = {};
   final Map<int, Set<String>> skillPageResults = {};
   int? temporarySkillPage;
+  int? temporarySkillFilterPage;
+  int featuredSkillsTab = 0;
   final Set<int> discardSkillFiltersOnDispose = {};
   String homeCdFilter = '全部';
   String homeSchoolFilter = '全部';
@@ -1020,22 +1014,38 @@ class SkillStore extends ChangeNotifier {
         data['selectedCharacterId'] as String? ?? characters.first.id;
     _ensureSelectedCharacterIsActive();
     page = (data['page'] as int? ?? 0).clamp(0, 7);
+    if (page == 2) {
+      page = 1;
+      featuredSkillsTab = 1;
+    }
     final validNavigationIds =
         navigationPageOptions.map((item) => item.id).toSet();
-    final savedOrder = (data['navigationOrder'] as List?)
+    final rawOrder = (data['navigationOrder'] as List?)
             ?.map((item) => item.toString())
-            .where(validNavigationIds.contains)
             .toList() ??
         const <String>[];
+    final savedOrder = <String>[];
+    for (final id in rawOrder) {
+      final migrated = id == 'important' || id == 'tradable' ? 'featured' : id;
+      if (validNavigationIds.contains(migrated) &&
+          !savedOrder.contains(migrated)) {
+        savedOrder.add(migrated);
+      }
+    }
     navigationOrder = [
       ...savedOrder.toSet(),
       ...defaultNavigationOrder.where((id) => !savedOrder.contains(id))
     ];
-    navigationVisible = (data['navigationVisible'] as List?)
-            ?.map((item) => item.toString())
+    final rawVisible = (data['navigationVisible'] as List?)
+        ?.map((item) => item.toString())
+        .toSet();
+    navigationVisible = rawVisible == null
+        ? defaultNavigationVisible.toSet()
+        : rawVisible
+            .map(
+                (id) => id == 'important' || id == 'tradable' ? 'featured' : id)
             .where(validNavigationIds.contains)
-            .toSet() ??
-        defaultNavigationVisible.toSet();
+            .toSet();
     navigationLabels = (data['navigationLabels'] as Map?)
             ?.map((key, value) => MapEntry(key.toString(), value.toString())) ??
         {};
@@ -1585,8 +1595,9 @@ class SkillStore extends ChangeNotifier {
   void setPage(int value, {bool fromHome = false}) {
     if (page == value) return;
     if (page == temporarySkillPage) {
-      discardSkillFiltersOnDispose.add(page);
+      discardSkillFiltersOnDispose.add(temporarySkillFilterPage ?? page);
       temporarySkillPage = null;
+      temporarySkillFilterPage = null;
     }
     if (!fromHome && value == temporarySkillPage) temporarySkillPage = null;
     page = value;
@@ -1612,10 +1623,15 @@ class SkillStore extends ChangeNotifier {
     skillPageFilters.remove(targetPage);
     manuallySelectedSkillPageCharacters.remove(targetPage);
     skillPageResults.remove(targetPage);
-    temporarySkillPage = targetPage;
+    final destinationPage = targetPage == 2 ? 1 : targetPage;
+    if (targetPage == 1 || targetPage == 2) {
+      featuredSkillsTab = targetPage - 1;
+    }
+    temporarySkillPage = destinationPage;
+    temporarySkillFilterPage = targetPage;
     pendingSkillPageCharacterId = characterId;
     pendingSkillPageMaxRank = math.max(1, maxSkillRank - 1);
-    setPage(targetPage, fromHome: true);
+    setPage(destinationPage, fromHome: true);
   }
 
   void setMaxSkillRank(int value) {
@@ -2429,7 +2445,7 @@ class _AppUpdateBanner extends StatelessWidget {
 class Shell extends StatelessWidget {
   const Shell({required this.store, super.key});
   final SkillStore store;
-  static const pageTitles = ['首页', '重要技能汇总', '可交易技能汇总', '所有技能汇总', '设置'];
+  static const pageTitles = ['首页', '技能汇总', '技能汇总', '所有技能汇总', '设置'];
   @override
   Widget build(BuildContext context) => LayoutBuilder(
         builder: (context, constraints) {
@@ -2454,21 +2470,23 @@ class Shell extends StatelessWidget {
                 : NavigationBar(
                     labelBehavior:
                         NavigationDestinationLabelBehavior.onlyShowSelected,
-                    selectedIndex: store.page.clamp(0, 4),
-                    onDestinationSelected: store.setPage,
+                    selectedIndex: switch (store.page) {
+                      1 || 2 => 1,
+                      3 => 2,
+                      4 || 5 || 6 || 7 => 3,
+                      _ => 0
+                    },
+                    onDestinationSelected: (index) =>
+                        store.setPage(const [0, 1, 3, 4][index]),
                     destinations: const [
                       NavigationDestination(
                           icon: Icon(Icons.dashboard_outlined),
                           selectedIcon: Icon(Icons.dashboard),
                           label: '首页'),
                       NavigationDestination(
-                          icon: Icon(Icons.star_border),
-                          selectedIcon: Icon(Icons.star),
-                          label: '重要'),
-                      NavigationDestination(
                           icon: Icon(Icons.auto_awesome_outlined),
                           selectedIcon: Icon(Icons.auto_awesome),
-                          label: '可交易'),
+                          label: '技能汇总'),
                       NavigationDestination(
                           icon: Icon(Icons.account_tree_outlined),
                           selectedIcon: Icon(Icons.account_tree),
@@ -2483,8 +2501,7 @@ class Shell extends StatelessWidget {
         },
       );
   Widget _page(BuildContext context) => switch (store.page) {
-        1 => ImportantPage(store: store),
-        2 => PurplePage(store: store),
+        1 || 2 => FeaturedSkillsPage(store: store),
         3 => AllSkillsPage(store: store),
         4 => SettingsPage(store: store),
         5 => CharacterManagementPage(store: store),
@@ -2611,6 +2628,7 @@ class SideNav extends StatelessWidget {
               label: store.navigationLabels[item.id] ?? item.label,
               icon: item.icon,
               selected: store.page == item.page ||
+                  (item.page == 1 && store.page == 2) ||
                   (item.page == 4 && (store.page == 4 || store.page == 7)),
               onTap: () => store.setPage(item.page))),
           const Spacer(),
@@ -5453,38 +5471,26 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
   }
 }
 
-class ImportantPage extends StatelessWidget {
-  const ImportantPage({required this.store, super.key});
+class FeaturedSkillsPage extends StatefulWidget {
+  const FeaturedSkillsPage({required this.store, super.key});
   final SkillStore store;
 
   @override
-  Widget build(BuildContext context) => PageBody(
-      title: '重要技能汇总',
-      action: FilledButton.icon(
-          onPressed: () => showImportantDialog(context, store),
-          icon: const Icon(Icons.add, size: 17),
-          label: const Text('添加技能')),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Padding(
-            padding: EdgeInsets.only(bottom: 14),
-            child: Text('点击重数即可修改，修改会同步到对应角色的技能记录。',
-                style: TextStyle(color: muted, fontSize: 12))),
-        SkillSummaryFilters(
-            store: store,
-            pageId: 1,
-            skillNames: store.importantSkills,
-            accent: ink,
-            onDeleteSkill: (name) =>
-                showRemoveImportantSkillDialog(context, store, name))
-      ]));
+  State<FeaturedSkillsPage> createState() => _FeaturedSkillsPageState();
 }
 
-class PurplePage extends StatelessWidget {
-  const PurplePage({required this.store, super.key});
-  final SkillStore store;
+class _FeaturedSkillsPageState extends State<FeaturedSkillsPage> {
+  late int selectedTab;
+
+  @override
+  void initState() {
+    super.initState();
+    selectedTab = widget.store.featuredSkillsTab.clamp(0, 1);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final store = widget.store;
     final highest = store.purpleSkills.fold<int>(
         0,
         (current, name) =>
@@ -5492,30 +5498,73 @@ class PurplePage extends StatelessWidget {
     final highestCount = store.purpleSkills
         .where((name) => store.highestSkillLevelForName(name) == highest)
         .length;
+    final important = selectedTab == 0;
     return PageBody(
-        title: '可交易技能统计',
-        action: Text('${store.purpleSkills.length} 个可交易技能',
-            style: const TextStyle(color: purple, fontWeight: FontWeight.w700)),
+        title: '技能汇总',
+        action: important
+            ? FilledButton.icon(
+                onPressed: () => showImportantDialog(context, store),
+                icon: const Icon(Icons.add, size: 17),
+                label: const Text('添加技能'))
+            : Text('${store.purpleSkills.length} 个可交易技能',
+                style: const TextStyle(
+                    color: purple, fontWeight: FontWeight.w700)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Padding(
-              padding: const EdgeInsets.only(bottom: 14),
-              child: CardShell(
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.auto_awesome, color: purple),
-                const SizedBox(width: 10),
-                const Flexible(
-                    child: Text('可交易技能以紫色标识，点击重数即可修改并同步角色记录。',
-                        style: TextStyle(color: muted, fontSize: 12))),
-                Text(
-                    highest == 0 ? '暂无已学习' : '$highestCount 个达到最高 ${highest} 重',
-                    style: const TextStyle(
-                        color: purple, fontWeight: FontWeight.w700))
-              ]))),
-          SkillSummaryFilters(
-              store: store,
-              pageId: 2,
-              skillNames: store.purpleSkills,
-              accent: purple)
+          SegmentedButton<int>(
+              segments: const [
+                ButtonSegment(
+                    value: 0,
+                    icon: Icon(Icons.star_border, size: 17),
+                    label: Text('重要技能')),
+                ButtonSegment(
+                    value: 1,
+                    icon: Icon(Icons.auto_awesome_outlined, size: 17),
+                    label: Text('可交易技能'))
+              ],
+              selected: {
+                selectedTab
+              },
+              showSelectedIcon: false,
+              onSelectionChanged: (value) => setState(() {
+                    selectedTab = value.first;
+                    store.featuredSkillsTab = selectedTab;
+                  })),
+          const SizedBox(height: 14),
+          if (important) ...[
+            const Padding(
+                padding: EdgeInsets.only(bottom: 14),
+                child: Text('点击重数即可修改，修改会同步到对应角色的技能记录。',
+                    style: TextStyle(color: muted, fontSize: 12))),
+            SkillSummaryFilters(
+                key: const ValueKey('important-skills'),
+                store: store,
+                pageId: 1,
+                skillNames: store.importantSkills,
+                accent: ink,
+                onDeleteSkill: (name) =>
+                    showRemoveImportantSkillDialog(context, store, name))
+          ] else ...[
+            Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: CardShell(
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.auto_awesome, color: purple),
+                  const SizedBox(width: 10),
+                  const Flexible(
+                      child: Text('可交易技能以紫色标识，点击重数即可修改并同步角色记录。',
+                          style: TextStyle(color: muted, fontSize: 12))),
+                  Text(
+                      highest == 0 ? '暂无已学习' : '$highestCount 个达到最高 $highest 重',
+                      style: const TextStyle(
+                          color: purple, fontWeight: FontWeight.w700))
+                ]))),
+            SkillSummaryFilters(
+                key: const ValueKey('tradable-skills'),
+                store: store,
+                pageId: 2,
+                skillNames: store.purpleSkills,
+                accent: purple)
+          ]
         ]));
   }
 }
