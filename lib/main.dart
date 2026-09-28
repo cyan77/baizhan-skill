@@ -5673,13 +5673,13 @@ class _FeaturedSkillProgressCardState
                     if (mounted) setState(() {});
                   },
                   child: Container(
-                      height: 50,
+                      height: 56,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       decoration: const BoxDecoration(
                           border: Border(bottom: BorderSide(color: line))),
                       child: Row(children: [
                         MindAvatar(character: character, radius: 14),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 12),
                         Flexible(
                             fit: FlexFit.loose,
                             child: Text(character.name,
@@ -5689,9 +5689,9 @@ class _FeaturedSkillProgressCardState
                                     color: ink,
                                     fontSize: 12,
                                     fontWeight: FontWeight.w700))),
-                        const SizedBox(width: 14),
+                        const SizedBox(width: 22),
                         RankBadge(rank: rank, plain: true),
-                        const SizedBox(width: 5),
+                        const SizedBox(width: 12),
                         Column(mainAxisSize: MainAxisSize.min, children: [
                           _RankStepButton(
                               icon: Icons.keyboard_arrow_up,
