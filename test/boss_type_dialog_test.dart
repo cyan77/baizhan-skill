@@ -335,6 +335,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('重要技能'), findsOneWidget);
     expect(find.text('可交易技能'), findsOneWidget);
+    expect(find.text('1 个重要技能'), findsOneWidget);
+    expect(find.text('添加技能'), findsOneWidget);
     expect(find.text('测试重要技能'), findsOneWidget);
     expect(find.text('测试可交易技能'), findsNothing);
     expect(find.text('1/1 个角色已全部收集'), findsOneWidget);
@@ -350,6 +352,8 @@ void main() {
     await tester.tap(find.text('可交易技能'));
     await tester.pumpAndSettle();
     expect(find.text('测试重要技能'), findsNothing);
+    expect(find.text('1 个可交易技能'), findsOneWidget);
+    expect(find.text('添加技能'), findsNothing);
     expect(find.text('测试可交易技能'), findsOneWidget);
     expect(find.text('0/1 个角色已全部收集'), findsOneWidget);
     expect(find.text('0%'), findsOneWidget);

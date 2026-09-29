@@ -5144,12 +5144,14 @@ class SkillSummaryFilters extends StatefulWidget {
       required this.skillNames,
       required this.accent,
       this.onDeleteSkill,
+      this.onAddSkill,
       super.key});
   final SkillStore store;
   final int pageId;
   final List<String> skillNames;
   final Color accent;
   final ValueChanged<String>? onDeleteSkill;
+  final VoidCallback? onAddSkill;
 
   @override
   State<SkillSummaryFilters> createState() => _SkillSummaryFiltersState();
@@ -5395,7 +5397,13 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
                       color: widget.accent,
                       fontSize: 12,
                       fontWeight: FontWeight.w600))),
-          const SizedBox(width: 12),
+          if (widget.onAddSkill != null) ...[
+            FilledButton.icon(
+                onPressed: widget.onAddSkill,
+                icon: const Icon(Icons.add, size: 17),
+                label: const Text('添加技能')),
+            const SizedBox(width: 12)
+          ],
           FilterChip(
               selected: onlyIncomplete,
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -5748,14 +5756,12 @@ class _FeaturedSkillsPageState extends State<FeaturedSkillsPage> {
     final important = selectedTab == 0;
     return PageBody(
         title: '关注技能',
-        action: important
-            ? FilledButton.icon(
-                onPressed: () => showImportantDialog(context, store),
-                icon: const Icon(Icons.add, size: 17),
-                label: const Text('添加技能'))
-            : Text('${store.purpleSkills.length} 个可交易技能',
-                style: const TextStyle(
-                    color: purple, fontWeight: FontWeight.w700)),
+        action: Text(
+            important
+                ? '${store.importantSkills.length} 个重要技能'
+                : '${store.purpleSkills.length} 个可交易技能',
+            style: TextStyle(
+                color: important ? ink : purple, fontWeight: FontWeight.w700)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           SegmentedButton<int>(
               segments: const [
@@ -5784,6 +5790,7 @@ class _FeaturedSkillsPageState extends State<FeaturedSkillsPage> {
                 pageId: 1,
                 skillNames: store.importantSkills,
                 accent: ink,
+                onAddSkill: () => showImportantDialog(context, store),
                 onDeleteSkill: (name) =>
                     showRemoveImportantSkillDialog(context, store, name))
           ] else ...[
