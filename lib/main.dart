@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:pp_ocr/pp_ocr.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -1676,6 +1677,14 @@ class SkillStore extends ChangeNotifier {
 
   void setLevel(String skillId, int value) {
     final character = selectedCharacter;
+    if (character == null) return;
+    character.levels[skillId] = value.clamp(0, maxSkillRank).toInt();
+    _save();
+    notifyListeners();
+  }
+
+  void setLevelForCharacter(String characterId, String skillId, int value) {
+    final character = _findCharacter(characterId);
     if (character == null) return;
     character.levels[skillId] = value.clamp(0, maxSkillRank).toInt();
     _save();
@@ -5428,8 +5437,16 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
               child: _FeaturedSkillProgressCard(
                   store: widget.store,
                   skillName: name,
-                  characters: characters,
+                  characters: onlyIncomplete
+                      ? characters
+                          .where((character) =>
+                              widget.store
+                                  .skillLevelForName(character.id, name) <
+                              widget.store.maxSkillRank)
+                          .toList()
+                      : characters,
                   accent: widget.accent,
+                  onProgressChanged: () => setState(() {}),
                   onDelete: widget.onDeleteSkill == null
                       ? null
                       : () => widget.onDeleteSkill!(name))))
@@ -5588,12 +5605,14 @@ class _FeaturedSkillProgressCard extends StatefulWidget {
       required this.skillName,
       required this.characters,
       required this.accent,
+      required this.onProgressChanged,
       this.onDelete});
 
   final SkillStore store;
   final String skillName;
   final List<CharacterData> characters;
   final Color accent;
+  final VoidCallback onProgressChanged;
   final VoidCallback? onDelete;
 
   @override
@@ -5677,56 +5696,70 @@ class _FeaturedSkillProgressCardState
                     await showSkillRankDialog(
                         context, widget.store, character, widget.skillName,
                         displayName: widget.skillName);
-                    if (mounted) setState(() {});
+                    if (mounted) widget.onProgressChanged();
                   },
                   child: Container(
                       height: 50,
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       decoration: const BoxDecoration(
                           border: Border(bottom: BorderSide(color: line))),
-                      child: Row(children: [
-                        MindAvatar(character: character, radius: 14),
-                        const SizedBox(width: 8),
-                        Flexible(
-                            fit: FlexFit.loose,
-                            child: Text(character.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    color: ink,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700))),
-                        const SizedBox(width: 14),
-                        RankBadge(rank: rank, plain: true),
-                        const SizedBox(width: 5),
-                        Column(mainAxisSize: MainAxisSize.min, children: [
-                          _RankStepButton(
-                              icon: Icons.keyboard_arrow_up,
-                              tooltip: '增加一重',
-                              onPressed: rank < widget.store.maxSkillRank
-                                  ? () {
-                                      widget.store.setLevelForSkillName(
-                                          character.id,
-                                          widget.skillName,
-                                          rank + 1);
-                                      setState(() {});
-                                    }
-                                  : null),
-                          _RankStepButton(
-                              icon: Icons.keyboard_arrow_down,
-                              tooltip: '减少一重',
-                              onPressed: rank > 0
-                                  ? () {
-                                      widget.store.setLevelForSkillName(
-                                          character.id,
-                                          widget.skillName,
-                                          rank - 1);
-                                      setState(() {});
-                                    }
-                                  : null)
-                        ]),
-                        const Spacer()
-                      ])));
+                      child: LayoutBuilder(
+                          builder: (context, constraints) => Align(
+                              alignment: Alignment.centerLeft,
+                              child: SizedBox(
+                                  width: math.min(constraints.maxWidth, 420.0),
+                                  child: Row(children: [
+                                    MindAvatar(
+                                        character: character, radius: 14),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                        flex: 3,
+                                        child: Text(character.name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                                color: ink,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700))),
+                                    Expanded(
+                                        flex: 2,
+                                        child: Center(
+                                            child: RankBadge(
+                                                rank: rank, plain: true))),
+                                    Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          _RankStepButton(
+                                              icon: Icons.keyboard_arrow_up,
+                                              tooltip: '增加一重',
+                                              onPressed: rank <
+                                                      widget.store.maxSkillRank
+                                                  ? () {
+                                                      widget.store
+                                                          .setLevelForSkillName(
+                                                              character.id,
+                                                              widget.skillName,
+                                                              rank + 1);
+                                                      widget
+                                                          .onProgressChanged();
+                                                    }
+                                                  : null),
+                                          _RankStepButton(
+                                              icon: Icons.keyboard_arrow_down,
+                                              tooltip: '减少一重',
+                                              onPressed: rank > 0
+                                                  ? () {
+                                                      widget.store
+                                                          .setLevelForSkillName(
+                                                              character.id,
+                                                              widget.skillName,
+                                                              rank - 1);
+                                                      widget
+                                                          .onProgressChanged();
+                                                    }
+                                                  : null)
+                                        ])
+                                  ]))))));
             })
           ]
         ]));
@@ -6597,6 +6630,37 @@ class _AllSkillsTableState extends State<_AllSkillsTable> {
                                   ? null
                                   : widget.store
                                       .level(widget.character!.id, skill.id),
+                              onIncrease: widget.character == null ||
+                                      widget.store.level(
+                                              widget.character!.id, skill.id) >=
+                                          widget.store.maxSkillRank
+                                  ? null
+                                  : () {
+                                      widget.store.setLevelForCharacter(
+                                          widget.character!.id,
+                                          skill.id,
+                                          widget.store.level(
+                                                  widget.character!.id,
+                                                  skill.id) +
+                                              1);
+                                      widget.onChanged();
+                                    },
+                              onDecrease: widget.character == null ||
+                                      widget.store.level(
+                                              widget.character!.id, skill.id) <=
+                                          0
+                                  ? null
+                                  : () {
+                                      widget.store.setLevelForCharacter(
+                                          widget.character!.id,
+                                          skill.id,
+                                          widget.store.level(
+                                                  widget.character!.id,
+                                                  skill.id) -
+                                              1);
+                                      widget.onChanged();
+                                    },
+                              showRankControls: widget.character != null,
                               collection: ''))
                 ]
               ]))));
@@ -6612,7 +6676,10 @@ class _AllSkillsTableRow extends StatelessWidget {
       this.stamina,
       this.bossRow = false,
       this.expanded = false,
-      this.nameColor = ink});
+      this.nameColor = ink,
+      this.showRankControls = false,
+      this.onIncrease,
+      this.onDecrease});
   final String name;
   final int? rank;
   final String? rankText;
@@ -6622,6 +6689,9 @@ class _AllSkillsTableRow extends StatelessWidget {
   final bool bossRow;
   final bool expanded;
   final Color nameColor;
+  final bool showRankControls;
+  final VoidCallback? onIncrease;
+  final VoidCallback? onDecrease;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -6671,12 +6741,24 @@ class _AllSkillsTableRow extends StatelessWidget {
                     fontWeight: FontWeight.w700))),
         Expanded(
             flex: 2,
-            child: Text(collection,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                    color: bossRow ? ink : muted,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700))),
+            child: showRankControls
+                ? Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    _RankStepButton(
+                        icon: Icons.keyboard_arrow_up,
+                        tooltip: '增加一重',
+                        onPressed: onIncrease),
+                    const SizedBox(width: 12),
+                    _RankStepButton(
+                        icon: Icons.keyboard_arrow_down,
+                        tooltip: '减少一重',
+                        onPressed: onDecrease)
+                  ])
+                : Text(collection,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: bossRow ? ink : muted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700))),
         Expanded(
             flex: 2,
             child: Text(spirit ?? '',
@@ -8944,7 +9026,8 @@ Future<void> showCharacterDialog(BuildContext context, SkillStore store,
                                             final levels =
                                                 await pickCharacterImageLevels(
                                                     store, gender);
-                                            if (levels == null) return;
+                                            if (levels == null ||
+                                                !context.mounted) return;
                                             setState(() {
                                               if (character == null) {
                                                 importedLevels.clear();
@@ -9121,6 +9204,16 @@ Future<Map<String, int>?> pickCharacterImageLevels(
   if (imageSize > 25 * 1024 * 1024) {
     throw const FormatException('图片文件过大，请选择小于 25 MB 的截图');
   }
+  String? paddleError;
+  if (Platform.isWindows) {
+    try {
+      final paddleRaw = await recognizePaddleImageInIsolate(path);
+      final paddle = parseCharacterImageOcr(paddleRaw, store, gender);
+      if (paddle.isNotEmpty) return paddle;
+    } catch (error) {
+      paddleError = '$error';
+    }
+  }
   // Windows enlarges narrow screenshots during native decoding, avoiding a
   // temporary file that Windows OCR could not open on some installations.
   if (Platform.isMacOS) {
@@ -9135,7 +9228,6 @@ Future<Map<String, int>?> pickCharacterImageLevels(
     }
   }
   const channel = MethodChannel('baizhan_skill/ocr');
-  final List<dynamic> raw;
   Future<List<dynamic>> recognize(String imagePath) async {
     if (!await File(imagePath).exists()) {
       throw FormatException('识别图片不存在：$imagePath');
@@ -9161,7 +9253,13 @@ Future<Map<String, int>?> pickCharacterImageLevels(
   }
 
   try {
-    raw = await recognizeWithFallback();
+    final raw = await recognizeWithFallback();
+    final system = parseCharacterImageOcr(raw, store, gender);
+    if (system.isNotEmpty) return system;
+    throw const FormatException('没有识别到首领管理中的技能');
+  } catch (error) {
+    if (paddleError == null) rethrow;
+    throw FormatException('PaddleOCR 不可用：$paddleError；系统识别也未成功：$error');
   } finally {
     if (temporaryDirectory != null) {
       try {
@@ -9169,7 +9267,98 @@ Future<Map<String, int>?> pickCharacterImageLevels(
       } catch (_) {}
     }
   }
-  return parseCharacterImageOcr(raw, store, gender);
+}
+
+Future<List<Map<String, Object>>> recognizePaddleImageInIsolate(String path) =>
+    Isolate.run(() => recognizePaddleImage(path));
+
+Future<List<Map<String, Object>>> recognizePaddleImage(String path) async {
+  final modelDir = Directory(Platform.environment['BAIZHAN_OCR_MODEL_DIR'] ??
+      '${File(Platform.resolvedExecutable).parent.path}${Platform.pathSeparator}model');
+  final det = File('${modelDir.path}${Platform.pathSeparator}det.onnx');
+  final rec = File('${modelDir.path}${Platform.pathSeparator}inference.onnx');
+  final dict =
+      File('${modelDir.path}${Platform.pathSeparator}ppocr_v6_dict.txt');
+  if (![det, rec, dict].every((file) => file.existsSync())) {
+    throw const FormatException('缺少 PaddleOCR 模型文件');
+  }
+  final ocr = PaddleOcr();
+  Directory? temp;
+  try {
+    final initialized = await ocr.initialize(
+        detModelPath: det.path, recModelPath: rec.path, dictPath: dict.path);
+    if (!initialized) throw const FormatException('PaddleOCR 模型初始化失败');
+    final segments = <({String file, int top, int height, double scale})>[];
+    var sourceWidth = 0;
+    var sourceHeight = 0;
+    final sourceFile = File(path);
+    if (sourceFile.lengthSync() <= 5 * 1024 * 1024) {
+      final source = img.decodeImage(sourceFile.readAsBytesSync());
+      sourceWidth = source?.width ?? 0;
+      sourceHeight = source?.height ?? 0;
+      if (source != null && source.width < 900 && source.height > 700) {
+        temp = Directory.systemTemp.createTempSync('baizhan_paddle_');
+        for (var top = 0; top < source.height;) {
+          final height = math.min(480, source.height - top);
+          final crop = img.copyCrop(source,
+              x: 0, y: top, width: source.width, height: height);
+          final resized = img.copyResize(crop,
+              width: 900, interpolation: img.Interpolation.cubic);
+          final file = '${temp.path}${Platform.pathSeparator}part_$top.png';
+          File(file).writeAsBytesSync(img.encodePng(resized));
+          segments.add((
+            file: file,
+            top: top,
+            height: height,
+            scale: resized.width / source.width
+          ));
+          if (top + height >= source.height) break;
+          top += height - 48;
+        }
+      }
+    }
+    if (segments.isEmpty) {
+      segments.add((file: path, top: 0, height: 0, scale: 1));
+    }
+    final result = <Map<String, Object>>[];
+    for (final segment in segments) {
+      final recognized = await ocr.recognizeImage(segment.file);
+      for (final line in recognized) {
+        if (line.box.isEmpty) continue;
+        final x = line.box.map((point) => point.dx).reduce((a, b) => a + b) /
+            line.box.length;
+        final y = line.box.map((point) => point.dy).reduce((a, b) => a + b) /
+            line.box.length;
+        if (segment.height > 0) {
+          final originalY = y / segment.scale;
+          if ((segment.top > 0 && originalY < 24) ||
+              (segment.top + segment.height <
+                      segments.last.top + segments.last.height &&
+                  originalY > segment.height - 24)) continue;
+        }
+        if (sourceWidth == 0 || sourceHeight == 0) {
+          result.add({'text': line.text});
+        } else {
+          result.add({
+            'text': line.text,
+            'x': segment.height == 0 ? x / sourceWidth : x / 900,
+            'y': segment.height == 0
+                ? y / sourceHeight
+                : (segment.top + y / segment.scale) / sourceHeight
+          });
+        }
+      }
+    }
+    if (sourceHeight > 0) {
+      result.sort((a, b) => (a['y'] as double).compareTo(b['y'] as double));
+    }
+    return result;
+  } finally {
+    ocr.dispose();
+    try {
+      temp?.deleteSync(recursive: true);
+    } catch (_) {}
+  }
 }
 
 String? _prepareOcrImage(String path) {
@@ -9235,9 +9424,14 @@ Map<String, int> parseCharacterImageOcr(
     for (final skill in knownSkills) {
       final name = normalize(skillNameForGender(skill, gender));
       if (name.isEmpty) continue;
-      final allowedErrors = name.length >= 6 ? 2 : name.length >= 3 ? 1 : 0;
+      final allowedErrors = name.length >= 6
+          ? 2
+          : name.length >= 3
+              ? 1
+              : 0;
       if (text.length < name.length) {
-        if (text.length >= 3 && text.length == name.length - 1 &&
+        if (text.length >= 3 &&
+            text.length == name.length - 1 &&
             editDistance(text, name) <= 1) {
           candidates.add((skill: skill, start: 0, end: text.length, errors: 1));
         }
@@ -9245,12 +9439,15 @@ Map<String, int> parseCharacterImageOcr(
       }
       ({Skill skill, int start, int end, int errors})? best;
       for (var start = 0; start <= text.length - name.length; start++) {
-        final errors = editDistance(
-            text.substring(start, start + name.length), name);
-        if (errors <= allowedErrors &&
-            (best == null || errors < best.errors)) {
-          best = (skill: skill, start: start,
-              end: start + name.length, errors: errors);
+        final errors =
+            editDistance(text.substring(start, start + name.length), name);
+        if (errors <= allowedErrors && (best == null || errors < best.errors)) {
+          best = (
+            skill: skill,
+            start: start,
+            end: start + name.length,
+            errors: errors
+          );
           if (errors == 0) break;
         }
       }
@@ -9280,10 +9477,11 @@ Map<String, int> parseCharacterImageOcr(
 
   // Windows OCR can return columns out of reading order. Rank headings span
   // all three columns, so place them by their vertical screenshot position.
-  final positioned = raw.whereType<Map>().where((item) =>
-      item['y'] is num && item['x'] is num).toList()
-    ..sort((left, right) =>
-        (left['y'] as num).compareTo(right['y'] as num));
+  final positioned = raw
+      .whereType<Map>()
+      .where((item) => item['y'] is num && item['x'] is num)
+      .toList()
+    ..sort((left, right) => (left['y'] as num).compareTo(right['y'] as num));
   final rankPositions = <(double, int)>[];
   var lastHeader = 10;
   var lastHeaderY = 0.0;
@@ -9302,8 +9500,8 @@ Map<String, int> parseCharacterImageOcr(
       lastHeaderY = y;
     }
   }
-  final ordered = positioned.length == raw.whereType<Map>().length
-      ? positioned : raw;
+  final ordered =
+      positioned.length == raw.whereType<Map>().length ? positioned : raw;
   for (final item in ordered) {
     if (item is! Map) continue;
     final text = item['text']?.toString() ?? '';
