@@ -9205,7 +9205,10 @@ Map<String, int> parseCharacterImageOcr(
     '二重': 2,
     '一重': 1
   };
-  final knownSkills = store.bosses.expand((boss) => boss.skills).toList();
+  final knownSkills = store.bosses
+      .expand((boss) => boss.skills)
+      .where((skill) => skillAppliesToGender(skill, gender))
+      .toList();
   final levels = <String, int>{};
   // The game's skill overview is ordered from ten ranks downward. The top
   // heading is often clipped by the currency bar, so treat the first block as
@@ -9226,22 +9229,82 @@ Map<String, int> parseCharacterImageOcr(
     return previous.last;
   }
 
-  bool approximatelyContains(String text, String name) {
-    if (text.contains(name)) return true;
-    if (name.length < 3 || text.length < name.length) return false;
-    final allowedErrors = name.length >= 6 ? 2 : 1;
-    for (var start = 0; start <= text.length - name.length; start++) {
-      if (editDistance(text.substring(start, start + name.length), name) <=
-          allowedErrors) {
-        return true;
+  List<({Skill skill, int start, int end, int errors})> matchKnownSkills(
+      String text) {
+    final candidates = <({Skill skill, int start, int end, int errors})>[];
+    for (final skill in knownSkills) {
+      final name = normalize(skillNameForGender(skill, gender));
+      if (name.isEmpty) continue;
+      final allowedErrors = name.length >= 6 ? 2 : name.length >= 3 ? 1 : 0;
+      if (text.length < name.length) {
+        if (text.length >= 3 && text.length == name.length - 1 &&
+            editDistance(text, name) <= 1) {
+          candidates.add((skill: skill, start: 0, end: text.length, errors: 1));
+        }
+        continue;
       }
+      ({Skill skill, int start, int end, int errors})? best;
+      for (var start = 0; start <= text.length - name.length; start++) {
+        final errors = editDistance(
+            text.substring(start, start + name.length), name);
+        if (errors <= allowedErrors &&
+            (best == null || errors < best.errors)) {
+          best = (skill: skill, start: start,
+              end: start + name.length, errors: errors);
+          if (errors == 0) break;
+        }
+      }
+      if (best != null) candidates.add(best);
     }
-    return text.length >= 3 &&
-        text.length < name.length &&
-        editDistance(text, name) <= 1;
+    // A single OCR fragment can resemble several catalog entries. Prefer an
+    // exact/longer name; do not guess between equally plausible names.
+    candidates.sort((a, b) {
+      final errors = a.errors.compareTo(b.errors);
+      if (errors != 0) return errors;
+      return (b.end - b.start).compareTo(a.end - a.start);
+    });
+    final matches = <({Skill skill, int start, int end, int errors})>[];
+    for (final candidate in candidates) {
+      bool overlaps(({Skill skill, int start, int end, int errors}) other) =>
+          candidate.start < other.end && other.start < candidate.end;
+      if (matches.any(overlaps)) continue;
+      final tied = candidates.any((other) =>
+          other.skill.name != candidate.skill.name &&
+          other.errors == candidate.errors &&
+          other.end - other.start == candidate.end - candidate.start &&
+          overlaps(other));
+      if (!tied) matches.add(candidate);
+    }
+    return matches;
   }
 
-  for (final item in raw) {
+  // Windows OCR can return columns out of reading order. Rank headings span
+  // all three columns, so place them by their vertical screenshot position.
+  final positioned = raw.whereType<Map>().where((item) =>
+      item['y'] is num && item['x'] is num).toList()
+    ..sort((left, right) =>
+        (left['y'] as num).compareTo(right['y'] as num));
+  final rankPositions = <(double, int)>[];
+  var lastHeader = 10;
+  var lastHeaderY = 0.0;
+  for (final item in positioned) {
+    final header = rankHeaders[normalize(item['text']?.toString() ?? '')];
+    if (header == null || (item['x'] as num) > 0.18) continue;
+    final y = (item['y'] as num).toDouble();
+    final skippedRanks = lastHeader - header;
+    // The screenshot may omit intermediate sections (for example 四重 to
+    // 一重). Accept a larger downward jump when there is enough vertical space
+    // between headings; a false 一重 immediately after 十重 stays rejected.
+    if (skippedRanks >= 0 &&
+        (skippedRanks <= 2 || y - lastHeaderY >= skippedRanks * 0.025)) {
+      rankPositions.add((y, header));
+      lastHeader = header;
+      lastHeaderY = y;
+    }
+  }
+  final ordered = positioned.length == raw.whereType<Map>().length
+      ? positioned : raw;
+  for (final item in ordered) {
     if (item is! Map) continue;
     final text = item['text']?.toString() ?? '';
     final normalizedText = normalize(text);
@@ -9250,17 +9313,22 @@ Map<String, int> parseCharacterImageOcr(
     // one-rank skills. Text inside a skill name is not a section heading.
     final header = rankHeaders[normalizedText];
     if (header != null) {
+      if (rankPositions.isNotEmpty) continue;
       if (header <= currentRank && currentRank - header <= 2) {
         currentRank = header;
       }
       continue;
     }
-    for (final skill in knownSkills) {
-      final skillName = skillNameForGender(skill, gender);
-      final normalizedName = normalize(skillName);
-      if (approximatelyContains(normalizedText, normalizedName)) {
-        levels[skill.name] = currentRank;
+    var skillRank = currentRank;
+    if (rankPositions.isNotEmpty && item['y'] is num) {
+      final y = (item['y'] as num).toDouble();
+      for (final (headerY, rank) in rankPositions) {
+        if (headerY > y + 0.006) break;
+        skillRank = rank;
       }
+    }
+    for (final match in matchKnownSkills(normalizedText)) {
+      levels[match.skill.name] = skillRank;
     }
   }
   if (levels.isEmpty) {
