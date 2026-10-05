@@ -14,6 +14,7 @@ import 'package:pp_ocr/pp_ocr.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'filter_snapshot.dart';
 import 'boss_catalog_service.dart';
 import 'character_excel_import.dart';
 import 'seed_data.dart';
@@ -3411,6 +3412,20 @@ class _NameAutocompleteState extends State<_NameAutocomplete> {
   }
 }
 
+class _FilterActions extends StatelessWidget {
+  const _FilterActions({required this.onApply, required this.onReset});
+  final VoidCallback onApply;
+  final VoidCallback onReset;
+  @override
+  Widget build(BuildContext context) => Wrap(spacing: 8, children: [
+        TextButton.icon(
+            onPressed: onApply,
+            icon: const Icon(Icons.refresh, size: 16),
+            label: const Text('重新筛选')),
+        TextButton(onPressed: onReset, child: const Text('重置筛选')),
+      ]);
+}
+
 class CharacterFilterPanel extends StatefulWidget {
   const CharacterFilterPanel({required this.store, super.key});
   final SkillStore store;
@@ -3420,6 +3435,7 @@ class CharacterFilterPanel extends StatefulWidget {
 }
 
 class _CharacterFilterPanelState extends State<CharacterFilterPanel> {
+  final _results = FilterSnapshot<String>();
   final query = TextEditingController();
   String gender = '全部';
   String school = '全部';
@@ -3441,13 +3457,19 @@ class _CharacterFilterPanelState extends State<CharacterFilterPanel> {
     super.dispose();
   }
 
-  List<CharacterData> get matches =>
-      widget.store.activeCharacters.where((character) {
+  List<CharacterData> get matches {
+    final ids = _results.resolve((query.text, gender, school), () {
+      return widget.store.activeCharacters.where((character) {
         final text = query.text.trim().toLowerCase();
         return (text.isEmpty || character.name.toLowerCase().contains(text)) &&
             (gender == '全部' || character.gender == gender) &&
             (school == '全部' || character.school == school);
-      }).toList();
+      }).map((character) => character.id);
+    });
+    return widget.store.activeCharacters
+        .where((item) => ids.contains(item.id))
+        .toList();
+  }
 
   @override
   Widget build(BuildContext context) => CardShell(
@@ -3495,6 +3517,11 @@ class _CharacterFilterPanelState extends State<CharacterFilterPanel> {
             }, width, searchable: true)
           ]);
         }),
+        _FilterActions(
+          onApply: () => setState(_results.clear),
+          onReset: () => setState(() {
+            query.clear(); gender = '全部'; school = '全部'; _results.clear();
+          })),
         const SizedBox(height: 15),
         if (matches.isEmpty)
           const Text('没有符合条件的角色', style: TextStyle(color: muted, fontSize: 12))
@@ -3574,6 +3601,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  final _results = FilterSnapshot<String>();
   bool syncing = false;
   String cdFilter = '全部';
   String schoolFilter = '全部';
@@ -3600,7 +3628,8 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final character = store.selectedCharacter;
-    final visibleCharacters = store.activeCharacters.where((item) {
+    final ids = _results.resolve((cdFilter, schoolFilter, positionFilter), () {
+      return store.activeCharacters.where((item) {
       final matchesCd = cdFilter == '全部' ||
           (cdFilter == '已完成' && item.weeklyCompleted) ||
           (cdFilter == '未完成' && !item.weeklyCompleted);
@@ -3608,7 +3637,11 @@ class _HomePageState extends State<HomePage> {
       final matchesPosition =
           positionFilter == '全部' || item.position == positionFilter;
       return matchesCd && matchesSchool && matchesPosition;
-    }).toList();
+      }).map((item) => item.id);
+    });
+    final visibleCharacters = store.activeCharacters
+        .where((item) => ids.contains(item.id))
+        .toList();
     return PageBody(
         title: '首页',
         action: Text(
@@ -3648,6 +3681,11 @@ class _HomePageState extends State<HomePage> {
             ]);
           }),
           const SizedBox(height: 10),
+          _FilterActions(
+            onApply: () => setState(_results.clear),
+            onReset: () => setState(() {
+              cdFilter = schoolFilter = positionFilter = '全部'; _results.clear();
+            })),
           CharacterSwitcher(store: store, characters: visibleCharacters),
           const SizedBox(height: 14),
           CardShell(
@@ -3853,11 +3891,8 @@ class _ExistingSkillsPanelState extends State<ExistingSkillsPanel> {
   }
 
   List<Boss> get visibleBosses {
-    final query = bossQuery.text.trim().toLowerCase();
     return store.bosses
-        .where((boss) =>
-            (query.isEmpty || boss.name.toLowerCase().contains(query)) &&
-            boss.skills.any(_matches))
+        .where((boss) => boss.skills.any(_matches))
         .toList();
   }
 
@@ -3913,6 +3948,11 @@ class _ExistingSkillsPanelState extends State<ExistingSkillsPanel> {
             ]);
           }),
           const SizedBox(height: 6),
+          _FilterActions(
+            onApply: () => setState(() => visibleSkillIds = null),
+            onReset: () => setState(() {
+              maxRank = 0; bossQuery.clear(); visibleSkillIds = null;
+            })),
           const Text('点击技能可修改重数；名称、可交易状态和删除请前往首领技能管理。',
               style: TextStyle(color: muted, fontSize: 11)),
           const SizedBox(height: 4),
@@ -4174,16 +4214,26 @@ class _CharacterSwitcherState extends State<CharacterSwitcher> {
     if (_lastScrollTarget == target) return;
     _lastScrollTarget = target;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_controller.hasClients) return;
+      if (!mounted || !_controller.hasClients || _lastScrollTarget != target) {
+        return;
+      }
       var targetStart = 0.0;
       for (var index = 0; index < selectedIndex; index++) {
         targetStart += _characterWidth(context, characters[index]) + 10;
       }
-      final targetCenter =
-          targetStart + _characterWidth(context, characters[selectedIndex]) / 2;
-      final offset = targetCenter - _controller.position.viewportDimension / 2;
-      _controller.jumpTo(offset.clamp(_controller.position.minScrollExtent,
-          _controller.position.maxScrollExtent));
+      final targetEnd =
+          targetStart + _characterWidth(context, characters[selectedIndex]);
+      final position = _controller.position;
+      final viewportStart = position.pixels;
+      final viewportEnd = viewportStart + position.viewportDimension;
+      if (targetStart >= viewportStart && targetEnd <= viewportEnd) return;
+      // Reveal an offscreen card with the smallest necessary movement.
+      final offset = targetStart < viewportStart
+          ? targetStart
+          : targetEnd - position.viewportDimension;
+      _controller.jumpTo(offset
+          .clamp(position.minScrollExtent, position.maxScrollExtent)
+          .toDouble());
     });
   }
 
@@ -4235,6 +4285,9 @@ class _CharacterSwitcherState extends State<CharacterSwitcher> {
                   final characterWidth = _characterWidth(context, character);
                   return InkWell(
                       onTap: () {
+                        // A click inside this list must preserve its scroll position.
+                        _lastScrollTarget =
+                            '${character.id}|${visibleCharacters.map((item) => item.id).join(',')}';
                         widget.store.selectCharacter(character.id);
                         widget.onSelected?.call(character.id);
                       },
@@ -5167,6 +5220,7 @@ class SkillSummaryFilters extends StatefulWidget {
 }
 
 class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
+  final _entries = FilterSnapshot<(String, String)>();
   final skillQuery = TextEditingController();
   final horizontalController = ScrollController();
   final _rootKey = GlobalKey();
@@ -5343,14 +5397,23 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
   @override
   Widget build(BuildContext context) {
     final characters = filteredCharacters;
-    final matchingSkills = filteredSkills;
-    final skills = onlyIncomplete
-        ? matchingSkills
-            .where((name) => characters.any((character) =>
+    final entries = _entries.resolve(
+        (characterId, maxRank, skillQuery.text, onlyIncomplete), () {
+      // Recompute the full intersection when any filter changes.
+      widget.store.skillPageResults.remove(widget.pageId);
+      return [
+        for (final name in filteredSkills)
+          for (final character in characters)
+            if (!onlyIncomplete ||
                 widget.store.skillLevelForName(character.id, name) <
-                widget.store.maxSkillRank))
-            .toList()
-        : matchingSkills;
+                    widget.store.maxSkillRank)
+              (name, character.id)
+      ];
+    });
+    final skills = widget.skillNames
+        .where((name) => characters
+            .any((character) => entries.contains((name, character.id))))
+        .toList();
     return LayoutBuilder(builder: (context, constraints) {
       final width = _filterItemWidth(constraints.maxWidth, 3);
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -5424,6 +5487,15 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
               label: const Text('只看未完成'),
               onSelected: (value) => setState(() => onlyIncomplete = value))
         ]),
+        _FilterActions(
+          onApply: () => setState(() {
+            _entries.clear(); widget.store.skillPageResults.remove(widget.pageId);
+          }),
+          onReset: () => setState(() {
+            characterId = 'all'; maxRank = 0; onlyIncomplete = false;
+            skillQuery.clear(); _entries.clear();
+            widget.store.skillPageResults.remove(widget.pageId);
+          })),
         const SizedBox(height: 12),
         if (characters.isEmpty)
           const CardShell(
@@ -5437,14 +5509,9 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
               child: _FeaturedSkillProgressCard(
                   store: widget.store,
                   skillName: name,
-                  characters: onlyIncomplete
-                      ? characters
-                          .where((character) =>
-                              widget.store
-                                  .skillLevelForName(character.id, name) <
-                              widget.store.maxSkillRank)
-                          .toList()
-                      : characters,
+                  characters: characters
+                      .where((character) => entries.contains((name, character.id)))
+                      .toList(),
                   accent: widget.accent,
                   onProgressChanged: () => setState(() {}),
                   onDelete: widget.onDeleteSkill == null
@@ -5854,6 +5921,7 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
   bool showBossProgress = false;
   bool onlyIncomplete = false;
   String progressBossType = 'all';
+  final _progressEntries = FilterSnapshot<(String, String)>();
 
   @override
   void initState() {
@@ -5980,9 +6048,6 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
         : characters.firstWhere((item) => item.id == effectiveCharacterId,
             orElse: () => characters.first);
     final visibleBosses = filteredBosses;
-    final progressVisibleBosses = progressBossType == 'all'
-        ? visibleBosses
-        : visibleBosses.where((boss) => boss.type == progressBossType).toList();
     final effectiveProgressCharacterId =
         characters.any((character) => character.id == progressCharacterId)
             ? progressCharacterId
@@ -5992,15 +6057,28 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
         : characters
             .where((character) => character.id == effectiveProgressCharacterId)
             .toList();
-    final progressBosses = onlyIncomplete
-        ? progressVisibleBosses
-            .where((boss) => progressCharacters.any((item) {
-                  final progress =
-                      _bossLearnedProgress(widget.store, item, boss);
-                  return progress.collected < progress.total;
-                }))
-            .toList()
-        : progressVisibleBosses;
+    final progressEntries = showBossProgress
+        ? _progressEntries.resolve(
+            (progressCharacterId, progressBossType, bossQuery.text,
+                onlyIncomplete), () {
+            final query = bossQuery.text.trim().toLowerCase();
+            return [
+              for (final boss in widget.store.bosses)
+                if ((progressBossType == 'all' || boss.type == progressBossType) &&
+                    (query.isEmpty || boss.name.toLowerCase().contains(query)))
+                  for (final item in progressCharacters)
+                    if (!onlyIncomplete || (() {
+                      final progress = _bossLearnedProgress(widget.store, item, boss);
+                      return progress.collected < progress.total;
+                    })())
+                      (boss.id, item.id)
+            ];
+          })
+        : <(String, String)>{};
+    final progressBosses = widget.store.bosses
+        .where((boss) => progressCharacters
+            .any((item) => progressEntries.contains((boss.id, item.id))))
+        .toList();
     return PageBody(
         title: '首领技能',
         action: Text(
@@ -6024,6 +6102,7 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
               showSelectedIcon: false,
               onSelectionChanged: (value) => setState(() {
                     showBossProgress = value.first;
+                    _progressEntries.clear();
                     if (showBossProgress) {
                       maxRank = 0;
                       widget.store.skillPageResults.remove(3);
@@ -6137,6 +6216,15 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
             ]);
           }),
           const SizedBox(height: 14),
+          _FilterActions(
+            onApply: () => setState(() {
+              widget.store.skillPageResults.remove(3); _progressEntries.clear();
+            }),
+            onReset: () => setState(() {
+              characterId = progressCharacterId = progressBossType = 'all';
+              maxRank = 0; onlyIncomplete = false; bossQuery.clear();
+              widget.store.skillPageResults.remove(3); _progressEntries.clear();
+            })),
           if ((showBossProgress ? progressBosses : visibleBosses).isEmpty)
             const CardShell(
                 child: Text('没有符合条件的首领', style: TextStyle(color: muted)))
@@ -6145,7 +6233,7 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
                 store: widget.store,
                 bosses: progressBosses,
                 characters: progressCharacters,
-                onlyIncomplete: onlyIncomplete)
+                entries: progressEntries)
           else
             _AllSkillsTable(
                 store: widget.store,
@@ -6161,12 +6249,12 @@ class _BossProgressView extends StatelessWidget {
       {required this.store,
       required this.bosses,
       required this.characters,
-      required this.onlyIncomplete});
+      required this.entries});
 
   final SkillStore store;
   final List<Boss> bosses;
   final List<CharacterData> characters;
-  final bool onlyIncomplete;
+  final Set<(String, String)> entries;
 
   @override
   Widget build(BuildContext context) {
@@ -6176,12 +6264,9 @@ class _BossProgressView extends StatelessWidget {
     }
     return Column(
         children: bosses.map((boss) {
-      final visibleCharacters = onlyIncomplete
-          ? characters.where((character) {
-              final progress = _bossLearnedProgress(store, character, boss);
-              return progress.collected < progress.total;
-            }).toList()
-          : characters;
+      final visibleCharacters = characters
+          .where((character) => entries.contains((boss.id, character.id)))
+          .toList();
       return Padding(
           padding: const EdgeInsets.only(bottom: 10),
           child: _BossProgressCard(

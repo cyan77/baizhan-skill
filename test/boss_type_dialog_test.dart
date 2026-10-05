@@ -378,6 +378,11 @@ void main() {
     await tester.tap(find.byTooltip('增加一重'));
     await tester.pumpAndSettle();
     expect(store.skillLevelForName('featured-character', '测试可交易技能'), 10);
+    expect(find.text('测试可交易技能'), findsOneWidget);
+    expect(find.text('汇总角色'), findsOneWidget);
+    expect(find.text('1/1 个角色已全部收集'), findsOneWidget);
+    await tester.tap(find.text('重新筛选'));
+    await tester.pumpAndSettle();
     expect(find.text('测试可交易技能'), findsNothing);
     expect(find.text('没有符合条件的技能'), findsOneWidget);
     await tester.tap(find.text('只看未完成'));
