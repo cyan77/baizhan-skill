@@ -155,7 +155,7 @@ void main() {
     await tester.tap(find.text('精英').last);
     await tester.pumpAndSettle();
     store.bosses.single.type = '普通';
-    store.selectCharacter(store.selectedCharacterId);
+    store.setWeeklyCompleted(store.characters.single, false);
     await tester.pumpAndSettle();
     expect(find.text('快照首领'), findsOneWidget);
     await tester.tap(find.text('重新筛选'));
@@ -229,7 +229,7 @@ void main() {
     character.name = '编辑后角色';
     character.gender = '男性';
     character.school = '天策';
-    store.selectCharacter(store.selectedCharacterId);
+    store.setWeeklyCompleted(store.characters.single, false);
     await tester.pumpAndSettle();
     expect(find.text('编辑后角色'), findsOneWidget);
     await tester.tap(find.text('重新筛选'));
