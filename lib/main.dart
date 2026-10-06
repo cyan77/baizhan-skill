@@ -6187,7 +6187,7 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
                           ? '按首领查看 ${progressCharacters.length} 个角色的技能收集情况，点击重数可以修改。'
                           : character == null
                               ? '切换角色后可按首领和技能重数筛选。'
-                              : '当前角色：${character.name} · 符合条件的首领：${visibleBosses.length} 个',
+                              : '当前角色：${character.name} · 精神 ${formatNumber(widget.store.stat(character.id, true))} · 耐力 ${formatNumber(widget.store.stat(character.id, false))} · 符合条件的首领：${visibleBosses.length} 个',
                       style: const TextStyle(color: muted, fontSize: 12))),
               const SizedBox(width: 12),
               if (showBossProgress)
