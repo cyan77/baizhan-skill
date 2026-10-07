@@ -442,7 +442,7 @@ class BossCollectionProgress {
 BossCollectionProgress bossCollectionProgress(
     SkillStore store, CharacterData character, Boss boss) {
   return bossCollectionProgressForLevels(boss, character.gender,
-      (skill) => store.level(character.id, skill.id), store.maxSkillRank);
+      (skill) => character.levels[skill.id] ?? 0, store.maxSkillRank);
 }
 
 BossCollectionProgress bossCollectionProgressForLevels(
@@ -1738,17 +1738,25 @@ class SkillStore extends ChangeNotifier {
   int rankFor(String characterId, Boss boss) {
     final character = _findCharacter(characterId);
     if (character == null) return 0;
-    final values = boss.skills
-        .where((skill) => skillAppliesToGender(skill, character.gender))
-        .map((skill) => level(characterId, skill.id))
-        .toList();
-    if (values.isEmpty || values.any((value) => value < 1)) return 0;
-    return values.reduce((a, b) => a < b ? a : b);
+    return _rankForCharacter(character, boss);
+  }
+
+  int _rankForCharacter(CharacterData character, Boss boss) {
+    int? minimum;
+    for (final skill in boss.skills) {
+      if (!skillAppliesToGender(skill, character.gender)) continue;
+      final rank = character.levels[skill.id] ?? 0;
+      if (rank < 1) return 0;
+      if (minimum == null || rank < minimum) minimum = rank;
+    }
+    return minimum ?? 0;
   }
 
   double _multiplier(int rank) {
     if (rank <= 0) return 0;
-    statRules.ensureThrough(rank);
+    if (!statRules.rankMultipliers.containsKey(rank)) {
+      statRules.ensureThrough(rank);
+    }
     return statRules.rankMultipliers[rank] ?? 0;
   }
 
@@ -1757,7 +1765,7 @@ class SkillStore extends ChangeNotifier {
     if (character == null) return 0;
     var result = 10000.0;
     for (final boss in bosses) {
-      final current = rankFor(characterId, boss);
+      final current = _rankForCharacter(character, boss);
       final base = bossStatForGender(boss, character.gender, spirit);
       result += base * _multiplier(current);
     }
@@ -1769,15 +1777,30 @@ class SkillStore extends ChangeNotifier {
   double thresholdBonus(String characterId) {
     final character = _findCharacter(characterId);
     if (character == null) return 0;
-    final values = bosses
-        .expand((boss) => boss.skills)
-        .where((skill) => skillAppliesToGender(skill, character.gender))
-        .map((skill) => character.levels[skill.id] ?? 0);
+    // A threshold is reached when the third-highest applicable skill reaches it.
+    var first = 0, second = 0, third = 0;
+    for (final boss in bosses) {
+      for (final skill in boss.skills) {
+        if (!skillAppliesToGender(skill, character.gender)) continue;
+        final rank = character.levels[skill.id] ?? 0;
+        if (rank >= first) {
+          third = second;
+          second = first;
+          first = rank;
+        } else if (rank >= second) {
+          third = second;
+          second = rank;
+        } else if (rank > third) {
+          third = rank;
+        }
+      }
+    }
     statRules.ensureThrough(maxSkillRank);
-    return List<int>.generate(maxSkillRank, (index) => index + 1)
-        .where((value) => values.where((level) => level >= value).length > 2)
-        .fold<double>(
-            0, (sum, value) => sum + (statRules.threeSkillBonuses[value] ?? 0));
+    var bonus = 0.0;
+    for (var rank = 1; rank <= math.min(third, maxSkillRank); rank++) {
+      bonus += statRules.threeSkillBonuses[rank] ?? 0;
+    }
+    return bonus;
   }
 
   int skillLevelForName(String characterId, String name) {
@@ -6283,7 +6306,7 @@ class _BossProgressView extends StatelessWidget {
   return (
     collected: skills
         .where((skill) =>
-            store.level(character.id, skill.id) >= store.maxSkillRank)
+            (character.levels[skill.id] ?? 0) >= store.maxSkillRank)
         .length,
     total: skills.length
   );
@@ -6563,11 +6586,13 @@ class _AllSkillsTableState extends State<_AllSkillsTable> {
       for (var index = 0; index < bosses.length; index++)
         bosses[index].id: index
     };
+    final progressByBoss = {
+      for (final boss in bosses)
+        boss.id: bossCollectionProgress(widget.store, character, boss)
+    };
     bosses.sort((left, right) {
-      final leftProgress =
-          bossCollectionProgress(widget.store, character, left);
-      final rightProgress =
-          bossCollectionProgress(widget.store, character, right);
+      final leftProgress = progressByBoss[left.id]!;
+      final rightProgress = progressByBoss[right.id]!;
       var comparison =
           leftProgress.strategyRank.compareTo(rightProgress.strategyRank);
       if (comparison == 0) {
