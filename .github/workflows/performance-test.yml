@@ -1,0 +1,116 @@
+name: Performance test build
+
+on:
+  push:
+    branches:
+      - test/performance
+    tags:
+      - "perf-test-*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.4"
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Build Windows client
+        run: flutter build windows --release
+
+      - name: Bundle PaddleOCR models
+        shell: pwsh
+        run: |
+          @'
+          import json
+          import pathlib
+          import shutil
+          from urllib.parse import urlparse
+          from urllib.request import url2pathname
+
+          config = pathlib.Path('.dart_tool/package_config.json').resolve()
+          packages = json.loads(config.read_text(encoding='utf-8'))['packages']
+          entry = next(item for item in packages if item['name'] == 'pp_ocr')
+          uri = entry['rootUri']
+          root = pathlib.Path(url2pathname(urlparse(uri).path)) if uri.startswith('file:') else (config.parent / uri).resolve()
+          source = root / 'model'
+          expected = ('det.onnx', 'inference.onnx', 'ppocr_v6_dict.txt')
+          for name in expected:
+              if not (source / name).is_file():
+                  raise FileNotFoundError(source / name)
+          dest = pathlib.Path('build/windows/x64/runner/Release/model')
+          dest.mkdir(parents=True, exist_ok=True)
+          for name in expected:
+              shutil.copy2(source / name, dest / name)
+          '@ | python -
+
+      - name: Package Windows client
+        shell: pwsh
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath BaizhanSkill-Windows-x64.zip
+
+      - name: Read application version
+        shell: pwsh
+        run: |
+          $version = ((Select-String -Path pubspec.yaml -Pattern '^version:\s*(.+)$').Matches.Groups[1].Value.Trim() -replace '\+.*$', '')
+          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          if (-not (Test-Path $iscc)) {
+            throw "Inno Setup compiler was not found"
+          }
+          & $iscc "/DMyAppVersion=$env:APP_VERSION" installer\baizhan-skill.iss
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Upload Windows workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BaizhanSkill-Windows-x64
+          path: |
+            BaizhanSkill-Windows-x64.zip
+            installer/output/BaizhanSkill-Windows-x64-Setup.exe
+          if-no-files-found: error
+
+  publish-test:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: BaizhanSkill-Windows-x64
+          path: test-assets
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: perf-test-20261007-1
+          name: "性能优化测试版 0.1.34-beta.1"
+          prerelease: true
+          make_latest: "false"
+          body: |
+            Windows 性能优化测试版：减少精神、耐力计算和首领进度排序中的重复扫描。
+            已通过回归测试，请重点试用页面切换、角色切换和首领排序。
+            安装版可覆盖安装，便携版解压后运行。可从 v0.1.33 发布页重新下载安装正式版。
+          files: test-assets/**/*
