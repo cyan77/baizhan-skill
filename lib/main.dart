@@ -1621,7 +1621,7 @@ class SkillStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  void openSkillPage(int targetPage, String characterId) {
+  void openSkillPage(int targetPage, String characterId, {int? maxRank}) {
     skillPageFilters.remove(targetPage);
     manuallySelectedSkillPageCharacters.remove(targetPage);
     skillPageResults.remove(targetPage);
@@ -1632,7 +1632,7 @@ class SkillStore extends ChangeNotifier {
     temporarySkillPage = destinationPage;
     temporarySkillFilterPage = targetPage;
     pendingSkillPageCharacterId = characterId;
-    pendingSkillPageMaxRank = math.max(1, maxSkillRank - 1);
+    pendingSkillPageMaxRank = maxRank ?? math.max(1, maxSkillRank - 1);
     setPage(destinationPage, fromHome: true);
   }
 
@@ -4616,10 +4616,25 @@ class CharacterManagementPage extends StatelessWidget {
                                                   fontWeight: FontWeight.w600))
                                         ]),
                                         const Spacer(),
-                                        Text(
+                                        Row(children: [
+                                          Expanded(child: Text(
                                             '${(progress * 100).round()}% 技能重数进度',
                                             style: const TextStyle(
-                                                color: muted, fontSize: 12))
+                                                color: muted, fontSize: 12))),
+                                          TextButton.icon(
+                                              onPressed: character.archived
+                                                  ? null
+                                                  : () => store.openSkillPage(
+                                                      3, character.id, maxRank: 0),
+                                              icon: const Icon(
+                                                  Icons.account_tree_outlined,
+                                                  size: 15),
+                                              label: const Text('首领技能'),
+                                              style: TextButton.styleFrom(
+                                                  padding: const EdgeInsets.symmetric(
+                                                      horizontal: 8),
+                                                  visualDensity: VisualDensity.compact))
+                                        ])
                                       ]))));
                 })
         ]));
@@ -5421,6 +5436,7 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
   Widget build(BuildContext context) {
     final characters = filteredCharacters;
     final entries = _entries.resolve(
+        // Result membership stays fixed while displayed attributes update.
         (characterId, maxRank, skillQuery.text, onlyIncomplete), () {
       // Recompute the full intersection when any filter changes.
       widget.store.skillPageResults.remove(widget.pageId);
@@ -5438,6 +5454,9 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
             .any((character) => entries.contains((name, character.id))))
         .toList();
     return LayoutBuilder(builder: (context, constraints) {
+      final summaryCharacter = effectiveCharacterId == 'all'
+          ? null
+          : characters.firstOrNull;
       final width = _filterItemWidth(constraints.maxWidth, 3);
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Wrap(spacing: 10, runSpacing: 10, children: [
@@ -5487,7 +5506,9 @@ class _SkillSummaryFiltersState extends State<SkillSummaryFilters> {
         const SizedBox(height: 10),
         Row(children: [
           Expanded(
-              child: Text('技能 ${skills.length} 个 · 角色 ${characters.length} 个',
+              child: Text(summaryCharacter == null
+                  ? '技能 ${skills.length} 个 · 角色 ${characters.length} 个'
+                  : '当前角色：${summaryCharacter.name} · 精神 ${formatNumber(widget.store.stat(summaryCharacter.id, true))} · 耐力 ${formatNumber(widget.store.stat(summaryCharacter.id, false))} · 技能 ${skills.length} 个',
                   style: TextStyle(
                       color: widget.accent,
                       fontSize: 12,
@@ -6102,6 +6123,16 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
         .where((boss) => progressCharacters
             .any((item) => progressEntries.contains((boss.id, item.id))))
         .toList();
+    final summaryCharacter = showBossProgress
+        ? effectiveProgressCharacterId == 'all'
+            ? null
+            : progressCharacters.firstOrNull
+        : character;
+    final summaryText = summaryCharacter != null
+        ? '当前角色：${summaryCharacter.name} · 精神 ${formatNumber(widget.store.stat(summaryCharacter.id, true))} · 耐力 ${formatNumber(widget.store.stat(summaryCharacter.id, false))} · 符合条件的首领：${showBossProgress ? progressBosses.length : visibleBosses.length} 个'
+        : showBossProgress
+            ? '按首领查看 ${progressCharacters.length} 个角色的技能收集情况，点击重数可以修改。'
+            : '切换角色后可按首领和技能重数筛选。';
     return PageBody(
         title: '首领技能',
         action: Text(
@@ -6205,12 +6236,7 @@ class _AllSkillsPageState extends State<AllSkillsPage> {
             final compact = constraints.maxWidth < 700;
             return Row(children: [
               Expanded(
-                  child: Text(
-                      showBossProgress
-                          ? '按首领查看 ${progressCharacters.length} 个角色的技能收集情况，点击重数可以修改。'
-                          : character == null
-                              ? '切换角色后可按首领和技能重数筛选。'
-                              : '当前角色：${character.name} · 精神 ${formatNumber(widget.store.stat(character.id, true))} · 耐力 ${formatNumber(widget.store.stat(character.id, false))} · 符合条件的首领：${visibleBosses.length} 个',
+                  child: Text(summaryText,
                       style: const TextStyle(color: muted, fontSize: 12))),
               const SizedBox(width: 12),
               if (showBossProgress)
